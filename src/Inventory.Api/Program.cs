@@ -25,14 +25,16 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
     options.InvalidModelStateResponseFactory = context =>
     {
-        var details = context.ModelState
-            .Where(kv => kv.Value is { Errors.Count: > 0 })
-            .SelectMany(kv => kv.Value!.Errors.Select(e => new FieldError(
-                Field: JsonNamingPolicy.CamelCase.ConvertName(kv.Key),
-                Message: string.IsNullOrWhiteSpace(e.ErrorMessage)
-                    ? e.Exception?.Message ?? "Invalid value."
-                    : e.ErrorMessage)))
-            .ToList();
+      var details = context.ModelState
+          .Where(kv => kv.Value is { Errors.Count: > 0 })
+          .SelectMany(kv => kv.Value!.Errors.Select(e => new FieldError(
+              Field: string.IsNullOrWhiteSpace(kv.Key)
+                  ? "body"
+                  : JsonNamingPolicy.CamelCase.ConvertName(kv.Key),
+              Message: string.IsNullOrWhiteSpace(e.ErrorMessage)
+                  ? e.Exception?.Message ?? "Invalid value."
+                  : e.ErrorMessage)))
+          .ToList();
 
         var response = new ErrorResponse
         {

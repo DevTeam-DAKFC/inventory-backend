@@ -1,6 +1,7 @@
 using Inventory.Api.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,32 +16,56 @@ public class InventoryApiFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+
         builder.ConfigureAppConfiguration((_, config) =>
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DefaultConnection"] =
                     "Server=test;Database=InventoryDbTest;User Id=sa;Password=unused;Encrypt=False;TrustServerCertificate=True;",
-                ["Jwt:SecretKey"] = "test-only-secret-key-must-be-at-least-32-bytes-long-xxxxxxxxxxxx",
+                ["Jwt:SecretKey"] =
+                    "test-only-secret-key-must-be-at-least-32-bytes-long-xxxxxxxxxxxx",
                 ["Jwt:Issuer"] = "inventory-api-tests",
                 ["Jwt:Audience"] = "inventory-mobile-tests",
                 ["Jwt:ExpiresInMinutes"] = "60"
             });
         });
 
-        builder.ConfigureServices(services =>
+        builder.ConfigureTestServices(services =>
         {
+            services.RemoveAll<InventoryDbContext>();
             services.RemoveAll<DbContextOptions<InventoryDbContext>>();
             services.RemoveAll<DbContextOptions>();
-            services.RemoveAll<InventoryDbContext>();
 
-            var inMemoryProvider = new ServiceCollection()
-                .AddEntityFrameworkInMemoryDatabase()
-                .BuildServiceProvider();
+            RemoveDbContextOptionsConfigurations(services);
 
-            services.AddDbContext<InventoryDbContext>(options => options
-                .UseInMemoryDatabase(_databaseName)
-                .UseInternalServiceProvider(inMemoryProvider));
+            services.AddDbContext<InventoryDbContext>(options =>
+                options.UseInMemoryDatabase(_databaseName));
         });
+    }
+
+    public async Task ResetDatabaseAsync()
+    {
+        using var scope = Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+    }
+
+    private static void RemoveDbContextOptionsConfigurations(
+        IServiceCollection services)
+    {
+        var descriptors = services
+            .Where(service =>
+                service.ServiceType.FullName?.Contains(
+                    "IDbContextOptionsConfiguration",
+                    StringComparison.Ordinal) == true)
+            .ToArray();
+
+        foreach (var descriptor in descriptors)
+        {
+            services.Remove(descriptor);
+        }
     }
 }
