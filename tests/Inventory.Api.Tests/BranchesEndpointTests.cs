@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Inventory.Api.Dtos;
 using Inventory.Api.Models;
 
@@ -90,10 +91,7 @@ public class BranchesEndpointTests : IClassFixture<InventoryApiFactory>
         var response = await client.PostAsJsonAsync("/branches", new BranchCreateRequest());
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-        Assert.NotNull(error);
-        Assert.Equal("validation_error", error.Code);
-        Assert.Contains("name", error.Errors!.Keys);
+        await AssertErrorResponseAsync(response, "validation_error", "name");
     }
 
     [Fact]
@@ -142,6 +140,7 @@ public class BranchesEndpointTests : IClassFixture<InventoryApiFactory>
         var response = await client.GetAsync($"/branches/{Guid.NewGuid()}");
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        await AssertErrorResponseAsync(response, "not_found", "branchId");
     }
 
     [Fact]
@@ -212,4 +211,21 @@ public class BranchesEndpointTests : IClassFixture<InventoryApiFactory>
         IsActive = isActive,
         CreatedAt = DateTime.UtcNow
     };
+
+    private static async Task AssertErrorResponseAsync(
+        HttpResponseMessage response,
+        string expectedCode,
+        string expectedField)
+    {
+        var content = await response.Content.ReadAsStringAsync();
+        using var payload = JsonDocument.Parse(content);
+        var error = payload.RootElement.GetProperty("error");
+
+        Assert.Equal(expectedCode, error.GetProperty("code").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(error.GetProperty("message").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(error.GetProperty("requestId").GetString()));
+
+        var details = error.GetProperty("details").EnumerateArray().ToArray();
+        Assert.Contains(details, detail => detail.GetProperty("field").GetString() == expectedField);
+    }
 }

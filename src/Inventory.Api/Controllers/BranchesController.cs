@@ -1,10 +1,12 @@
-using System.Security.Claims;
 using Inventory.Api.Data;
 using Inventory.Api.Dtos;
 using Inventory.Api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using ErrorBody = Inventory.Api.Contracts.Errors.ErrorBody;
+using ErrorResponse = Inventory.Api.Contracts.Errors.ErrorResponse;
+using FieldError = Inventory.Api.Contracts.Errors.FieldError;
 
 namespace Inventory.Api.Controllers;
 
@@ -155,31 +157,31 @@ public class BranchesController : ControllerBase
         branch.CreatedAt,
         branch.UpdatedAt);
 
-    private static Dictionary<string, string[]> ValidateCreateRequest(BranchCreateRequest? request)
+    private static List<FieldError> ValidateCreateRequest(BranchCreateRequest? request)
     {
-        var errors = new Dictionary<string, string[]>();
+        var errors = new List<FieldError>();
 
         if (request is null || string.IsNullOrWhiteSpace(request.Name))
         {
-            errors["name"] = ["The name field is required."];
+            errors.Add(new FieldError("name", "The name field is required."));
         }
 
         return errors;
     }
 
-    private static Dictionary<string, string[]> ValidateUpdateRequest(BranchUpdateRequest? request)
+    private static List<FieldError> ValidateUpdateRequest(BranchUpdateRequest? request)
     {
-        var errors = new Dictionary<string, string[]>();
+        var errors = new List<FieldError>();
 
         if (request is null)
         {
-            errors["body"] = ["The request body is required."];
+            errors.Add(new FieldError("body", "The request body is required."));
             return errors;
         }
 
         if (request.Name is not null && string.IsNullOrWhiteSpace(request.Name))
         {
-            errors["name"] = ["The name field cannot be blank."];
+            errors.Add(new FieldError("name", "The name field cannot be blank."));
         }
 
         return errors;
@@ -191,9 +193,15 @@ public class BranchesController : ControllerBase
         return string.IsNullOrEmpty(normalized) ? null : normalized;
     }
 
-    private BadRequestObjectResult ValidationError(IDictionary<string, string[]> errors) =>
-        BadRequest(new ErrorResponse("validation_error", "One or more validation errors occurred.", errors));
+    private BadRequestObjectResult ValidationError(IReadOnlyList<FieldError> errors) =>
+        BadRequest(CreateError("validation_error", "The request contains invalid fields.", errors));
 
     private NotFoundObjectResult NotFoundError(string message) =>
-        NotFound(new ErrorResponse("not_found", message));
+        NotFound(CreateError(
+            "not_found",
+            message,
+            new[] { new FieldError("branchId", message) }));
+
+    private ErrorResponse CreateError(string code, string message, IReadOnlyList<FieldError> details) =>
+        new(new ErrorBody(code, message, details, HttpContext.TraceIdentifier));
 }
