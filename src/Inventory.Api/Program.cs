@@ -152,7 +152,11 @@ if (app.Environment.IsDevelopment())
     }
 }
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(webRootPath)
@@ -160,6 +164,14 @@ app.UseStaticFiles(new StaticFileOptions
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.MapGet("/", () => Results.Ok(new
+{
+    status = "ok",
+    service = "Inventory.Api",
+    docs = "/scalar/v1",
+    health = "/health"
+}));
 
 app.MapControllers();
 

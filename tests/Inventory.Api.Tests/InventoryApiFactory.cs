@@ -1,4 +1,7 @@
 using Inventory.Api.Data;
+using Inventory.Api.Models;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -13,6 +16,8 @@ namespace Inventory.Api.Tests;
 
 public class InventoryApiFactory : WebApplicationFactory<Program>
 {
+    private const string TestOrBearerSchemeName = "TestOrBearer";
+    private const string TestUserRoleHeaderName = "X-Test-User-Role";
     private readonly string _databaseName = $"inventory-tests-{Guid.NewGuid():N}";
     private readonly string _webRootPath = Path.Combine(
         Path.GetTempPath(),
@@ -51,6 +56,24 @@ public class InventoryApiFactory : WebApplicationFactory<Program>
             services.AddDbContext<InventoryDbContext>(options => options
                 .UseInMemoryDatabase(_databaseName)
                 .ConfigureWarnings(warnings => warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
+
+            services
+                .AddAuthentication(options =>
+                {
+                    options.DefaultAuthenticateScheme = TestOrBearerSchemeName;
+                    options.DefaultChallengeScheme = TestOrBearerSchemeName;
+                    options.DefaultForbidScheme = TestOrBearerSchemeName;
+                })
+                .AddPolicyScheme(TestOrBearerSchemeName, displayName: null, options =>
+                {
+                    options.ForwardDefaultSelector = context =>
+                        context.Request.Headers.ContainsKey(TestUserRoleHeaderName)
+                            ? TestAuthenticationHandler.SchemeName
+                            : JwtBearerDefaults.AuthenticationScheme;
+                })
+                .AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>(
+                    TestAuthenticationHandler.SchemeName,
+                    options => { });
         });
     }
 
@@ -64,7 +87,7 @@ public class InventoryApiFactory : WebApplicationFactory<Program>
         }
     }
 
-    public async Task ResetDatabaseAsync()
+    public async Task ResetDatabaseAsync(params Branch[] branches)
     {
         using var scope = Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
@@ -76,6 +99,12 @@ public class InventoryApiFactory : WebApplicationFactory<Program>
         if (Directory.Exists(uploadsPath))
         {
             Directory.Delete(uploadsPath, recursive: true);
+        }
+
+        if (branches.Length > 0)
+        {
+            dbContext.Branches.AddRange(branches);
+            await dbContext.SaveChangesAsync();
         }
     }
 
