@@ -5,9 +5,11 @@ using Inventory.Api.Auth;
 using Inventory.Api.Common.Errors;
 using Inventory.Api.Data;
 using Inventory.Api.InventoryMovements;
+using Inventory.Api.Products;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
@@ -26,16 +28,16 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
     options.InvalidModelStateResponseFactory = context =>
     {
-      var details = context.ModelState
-          .Where(kv => kv.Value is { Errors.Count: > 0 })
-          .SelectMany(kv => kv.Value!.Errors.Select(e => new FieldError(
-              Field: string.IsNullOrWhiteSpace(kv.Key)
-                  ? "body"
-                  : JsonNamingPolicy.CamelCase.ConvertName(kv.Key),
-              Message: string.IsNullOrWhiteSpace(e.ErrorMessage)
-                  ? e.Exception?.Message ?? "Invalid value."
-                  : e.ErrorMessage)))
-          .ToList();
+        var details = context.ModelState
+            .Where(kv => kv.Value is { Errors.Count: > 0 })
+            .SelectMany(kv => kv.Value!.Errors.Select(e => new FieldError(
+                Field: string.IsNullOrWhiteSpace(kv.Key)
+                    ? "body"
+                    : JsonNamingPolicy.CamelCase.ConvertName(kv.Key),
+                Message: string.IsNullOrWhiteSpace(e.ErrorMessage)
+                    ? e.Exception?.Message ?? "Invalid value."
+                    : e.ErrorMessage)))
+            .ToList();
 
         var response = new ErrorResponse
         {
@@ -61,6 +63,7 @@ builder.Services.AddDbContext<InventoryDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IProductImageStorage, LocalProductImageStorage>();
 
 builder.Services
     .AddOptions<JwtOptions>()
@@ -126,6 +129,10 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+var webRootPath = builder.Environment.WebRootPath
+    ?? Path.Combine(builder.Environment.ContentRootPath, "wwwroot");
+Directory.CreateDirectory(webRootPath);
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -146,6 +153,10 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(webRootPath)
+});
 
 app.UseAuthentication();
 app.UseAuthorization();
