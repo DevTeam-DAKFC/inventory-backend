@@ -6,9 +6,11 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 
 namespace Inventory.Api.Tests;
 
@@ -27,6 +29,7 @@ public class InventoryApiFactory : WebApplicationFactory<Program>
     {
         builder.UseEnvironment("Development");
         builder.UseWebRoot(_webRootPath);
+        builder.ConfigureLogging(logging => logging.ClearProviders());
 
         builder.ConfigureAppConfiguration((_, config) =>
         {
@@ -50,8 +53,9 @@ public class InventoryApiFactory : WebApplicationFactory<Program>
 
             RemoveDbContextOptionsConfigurations(services);
 
-            services.AddDbContext<InventoryDbContext>(options =>
-                options.UseInMemoryDatabase(_databaseName));
+            services.AddDbContext<InventoryDbContext>(options => options
+                .UseInMemoryDatabase(_databaseName)
+                .ConfigureWarnings(warnings => warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
 
             services
                 .AddAuthentication(options =>
