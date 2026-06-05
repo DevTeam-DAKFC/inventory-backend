@@ -7,6 +7,7 @@ using Inventory.Api.Data;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 
@@ -70,24 +71,31 @@ builder.Services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
 builder.Services.AddSingleton<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IAuthRegistrationService, AuthRegistrationService>();
 builder.Services.AddScoped<IAuthLoginService, AuthLoginService>();
-
-var jwtSection = builder.Configuration.GetSection(JwtOptions.SectionName);
-var jwtConfig = jwtSection.Get<JwtOptions>() ?? new JwtOptions();
+builder.Services.AddScoped<IAuthCurrentUserService, AuthCurrentUserService>();
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+    .AddJwtBearer();
+
+// Configure JwtBearer lazily from IOptions<JwtOptions> so test-time configuration
+// overrides applied via WebApplicationFactory take effect (a snapshot read at app
+// startup would lock in the pre-override values).
+builder.Services
+    .AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<IOptions<JwtOptions>>((bearerOptions, jwtOptionsAccessor) =>
     {
-        options.MapInboundClaims = false;
-        var keyBytes = Encoding.UTF8.GetBytes(jwtConfig.SecretKey);
-        options.TokenValidationParameters = new TokenValidationParameters
+        var jwt = jwtOptionsAccessor.Value;
+        var keyBytes = Encoding.UTF8.GetBytes(jwt.SecretKey);
+
+        bearerOptions.MapInboundClaims = false;
+        bearerOptions.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtConfig.Issuer,
-            ValidAudience = jwtConfig.Audience,
+            ValidIssuer = jwt.Issuer,
+            ValidAudience = jwt.Audience,
             IssuerSigningKey = keyBytes.Length > 0 ? new SymmetricSecurityKey(keyBytes) : null,
             ClockSkew = TimeSpan.FromMinutes(1)
         };

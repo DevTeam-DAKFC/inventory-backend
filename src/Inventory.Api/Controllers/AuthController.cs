@@ -12,13 +12,16 @@ public class AuthController : ControllerBase
 {
     private readonly IAuthRegistrationService _registrationService;
     private readonly IAuthLoginService _loginService;
+    private readonly IAuthCurrentUserService _currentUserService;
 
     public AuthController(
         IAuthRegistrationService registrationService,
-        IAuthLoginService loginService)
+        IAuthLoginService loginService,
+        IAuthCurrentUserService currentUserService)
     {
         _registrationService = registrationService;
         _loginService = loginService;
+        _currentUserService = currentUserService;
     }
 
     [AllowAnonymous]
@@ -88,5 +91,41 @@ public class AuthController : ControllerBase
 
             _ => throw new InvalidOperationException("Unhandled login result.")
         };
+    }
+
+    [Authorize]
+    [HttpGet("me")]
+    [ProducesResponseType(typeof(UserDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> Me(CancellationToken cancellationToken)
+    {
+        var result = await _currentUserService.GetCurrentUserAsync(User, cancellationToken);
+
+        return result switch
+        {
+            CurrentUserResult.Found found => Ok(UserDto.FromAppUser(found.User)),
+
+            CurrentUserResult.Unauthorized => Unauthorized(new ErrorResponse
+            {
+                Error = new ErrorBody
+                {
+                    Code = "unauthorized",
+                    Message = "Authentication required.",
+                    RequestId = HttpContext.TraceIdentifier
+                }
+            }),
+
+            _ => throw new InvalidOperationException("Unhandled current-user result.")
+        };
+    }
+
+    [Authorize]
+    [HttpPost("logout")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public IActionResult Logout()
+    {
+        // MVP: stateless logout — the client discards the token; no server-side blacklist.
+        return NoContent();
     }
 }
