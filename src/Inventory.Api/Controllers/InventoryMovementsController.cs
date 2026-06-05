@@ -1,5 +1,6 @@
 using Inventory.Api.Auth;
 using Inventory.Api.Common.Errors;
+using Inventory.Api.Common.Pagination;
 using Inventory.Api.InventoryMovements;
 using Inventory.Api.InventoryMovements.Dtos;
 using Microsoft.AspNetCore.Authorization;
@@ -21,6 +22,29 @@ public class InventoryMovementsController : ControllerBase
     {
         _currentUserService = currentUserService;
         _movementService = movementService;
+    }
+
+    [HttpGet]
+    [ProducesResponseType(typeof(PaginatedResponse<InventoryMovementResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> List(
+        [FromQuery] InventoryMovementQueryParameters query,
+        CancellationToken cancellationToken)
+    {
+        var result = await _movementService.ListAsync(query, cancellationToken);
+
+        return result switch
+        {
+            ListInventoryMovementsResult.Success success => Ok(success.Page),
+
+            ListInventoryMovementsResult.ValidationFailed validation => BadRequest(CreateError(
+                "validation_error",
+                "The request contains invalid fields.",
+                validation.Details)),
+
+            _ => throw new InvalidOperationException("Unhandled inventory movement list result.")
+        };
     }
 
     [HttpPost]
