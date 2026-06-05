@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
 using Inventory.Api.Auth;
 using Inventory.Api.Data;
 using Inventory.Api.Models;
@@ -63,18 +65,31 @@ public class AuthLogoutEndpointTests : IClassFixture<InventoryApiFactory>
     }
 
     [Fact]
-    public async Task Returns_401_Without_Token()
+    public async Task Returns_401_Without_Token_With_ErrorResponse_Envelope()
     {
         var response = await _client.SendAsync(Post(bearerToken: null));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var error = body.GetProperty("error");
+        Assert.Equal("unauthorized", error.GetProperty("code").GetString());
+        Assert.Equal("Authentication required.", error.GetProperty("message").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(error.GetProperty("requestId").GetString()));
     }
 
     [Fact]
-    public async Task Returns_401_With_Invalid_Token()
+    public async Task Returns_401_With_Invalid_Token_With_ErrorResponse_Envelope()
     {
         var response = await _client.SendAsync(Post(bearerToken: "not.a.real.token"));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var error = body.GetProperty("error");
+        Assert.Equal("unauthorized", error.GetProperty("code").GetString());
+        Assert.Equal("Authentication required.", error.GetProperty("message").GetString());
     }
 }

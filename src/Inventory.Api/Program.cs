@@ -77,9 +77,6 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();
 
-// Configure JwtBearer lazily from IOptions<JwtOptions> so test-time configuration
-// overrides applied via WebApplicationFactory take effect (a snapshot read at app
-// startup would lock in the pre-override values).
 builder.Services
     .AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
     .Configure<IOptions<JwtOptions>>((bearerOptions, jwtOptionsAccessor) =>
@@ -98,6 +95,26 @@ builder.Services
             ValidAudience = jwt.Audience,
             IssuerSigningKey = keyBytes.Length > 0 ? new SymmetricSecurityKey(keyBytes) : null,
             ClockSkew = TimeSpan.FromMinutes(1)
+        };
+
+        bearerOptions.Events = new JwtBearerEvents
+        {
+            OnChallenge = async challengeContext =>
+            {
+                // Replace the default empty 401 with the project's ErrorResponse envelope.
+                // The body is intentionally generic and does not reveal whether the token
+                // was missing, malformed, expired, or signed with the wrong key.
+                challengeContext.HandleResponse();
+                if (challengeContext.Response.HasStarted)
+                {
+                    return;
+                }
+
+                await AuthChallengeResponseWriter.WriteUnauthorizedAsync(
+                    challengeContext.Response,
+                    challengeContext.HttpContext.TraceIdentifier,
+                    challengeContext.HttpContext.RequestAborted);
+            }
         };
     });
 
