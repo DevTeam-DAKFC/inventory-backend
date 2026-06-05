@@ -3,6 +3,7 @@ using Inventory.Api.Contracts.Errors;
 using Inventory.Api.Contracts.Products;
 using Inventory.Api.Data;
 using Inventory.Api.Models;
+using Inventory.Api.Products;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
@@ -16,6 +17,14 @@ public class ProductsController : ControllerBase
     private const int DefaultPage = 1;
     private const int DefaultPageSize = 20;
     private const int MaxPageSize = 100;
+    private const long MaxImageSize = 5 * 1024 * 1024;
+    private static readonly IReadOnlyDictionary<string, string> ImageExtensionsByContentType =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["image/jpeg"] = ".jpg",
+            ["image/png"] = ".png",
+            ["image/webp"] = ".webp"
+        };
     private static readonly Dictionary<string, string> UpdatableProductFields = new(StringComparer.OrdinalIgnoreCase)
     {
         ["name"] = "name",
@@ -28,10 +37,14 @@ public class ProductsController : ControllerBase
     };
 
     private readonly InventoryDbContext _dbContext;
+    private readonly IProductImageStorage _productImageStorage;
 
-    public ProductsController(InventoryDbContext dbContext)
+    public ProductsController(
+        InventoryDbContext dbContext,
+        IProductImageStorage productImageStorage)
     {
         _dbContext = dbContext;
+        _productImageStorage = productImageStorage;
     }
 
     [HttpGet]
@@ -302,6 +315,71 @@ public class ProductsController : ControllerBase
         return NoContent();
     }
 
+    [HttpPost("{productId}/image")]
+    [Consumes("multipart/form-data")]
+    [ProducesResponseType(typeof(ProductResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UploadProductImage(
+        string productId,
+        [FromForm] IFormFile? file,
+        CancellationToken cancellationToken)
+    {
+        if (!TryParseProductId(productId, out var parsedProductId, out var invalidIdResult))
+        {
+            return invalidIdResult;
+        }
+
+        var validationErrors = ValidateImage(file);
+        if (validationErrors.Count > 0)
+        {
+            return BadRequest(CreateError(
+                "validation_error",
+                "The request contains invalid fields.",
+                validationErrors));
+        }
+
+        var product = await _dbContext.Products
+            .FirstOrDefaultAsync(product => product.Id == parsedProductId, cancellationToken);
+
+        if (product is null)
+        {
+            return NotFound(CreateError(
+                "not_found",
+                "Product was not found.",
+                new[] { new FieldError("productId", "Product was not found.") }));
+        }
+
+        var previousImageUrl = product.ImageUrl;
+        string newImageUrl;
+
+        await using (var content = file!.OpenReadStream())
+        {
+            newImageUrl = await _productImageStorage.SaveAsync(
+                product.Id,
+                content,
+                ImageExtensionsByContentType[file.ContentType],
+                cancellationToken);
+        }
+
+        product.ImageUrl = newImageUrl;
+        product.UpdatedAt = DateTime.UtcNow;
+
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            _productImageStorage.DeleteIfManaged(newImageUrl);
+            throw;
+        }
+
+        _productImageStorage.DeleteIfManaged(previousImageUrl);
+
+        return Ok(ToResponse(product));
+    }
+
     private static ProductResponse ToResponse(Product product) =>
         new(
             product.Id,
@@ -328,6 +406,33 @@ public class ProductsController : ControllerBase
         if (pageSize < 1 || pageSize > MaxPageSize)
         {
             errors.Add(new FieldError("pageSize", "pageSize must be between 1 and 100."));
+        }
+
+        return errors;
+    }
+
+    private static List<FieldError> ValidateImage(IFormFile? file)
+    {
+        var errors = new List<FieldError>();
+
+        if (file is null)
+        {
+            errors.Add(new FieldError("file", "file is required."));
+            return errors;
+        }
+
+        if (file.Length == 0)
+        {
+            errors.Add(new FieldError("file", "file must not be empty."));
+        }
+        else if (file.Length > MaxImageSize)
+        {
+            errors.Add(new FieldError("file", "file must not exceed 5 MB."));
+        }
+
+        if (!ImageExtensionsByContentType.ContainsKey(file.ContentType))
+        {
+            errors.Add(new FieldError("file", "file must be a JPEG, PNG, or WebP image."));
         }
 
         return errors;

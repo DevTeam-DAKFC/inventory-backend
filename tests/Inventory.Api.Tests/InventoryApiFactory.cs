@@ -12,10 +12,16 @@ namespace Inventory.Api.Tests;
 public class InventoryApiFactory : WebApplicationFactory<Program>
 {
     private readonly string _databaseName = $"inventory-tests-{Guid.NewGuid():N}";
+    private readonly string _webRootPath = Path.Combine(
+        Path.GetTempPath(),
+        $"inventory-api-tests-{Guid.NewGuid():N}");
+
+    public string WebRootPath => _webRootPath;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+        builder.UseWebRoot(_webRootPath);
 
         builder.ConfigureAppConfiguration((_, config) =>
         {
@@ -44,6 +50,16 @@ public class InventoryApiFactory : WebApplicationFactory<Program>
         });
     }
 
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+
+        if (disposing && Directory.Exists(_webRootPath))
+        {
+            Directory.Delete(_webRootPath, recursive: true);
+        }
+    }
+
     public async Task ResetDatabaseAsync()
     {
         using var scope = Services.CreateScope();
@@ -51,6 +67,12 @@ public class InventoryApiFactory : WebApplicationFactory<Program>
 
         await dbContext.Database.EnsureDeletedAsync();
         await dbContext.Database.EnsureCreatedAsync();
+
+        var uploadsPath = Path.Combine(_webRootPath, "uploads");
+        if (Directory.Exists(uploadsPath))
+        {
+            Directory.Delete(uploadsPath, recursive: true);
+        }
     }
 
     private static void RemoveDbContextOptionsConfigurations(
