@@ -69,6 +69,7 @@ builder.Services
 builder.Services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
 builder.Services.AddSingleton<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IAuthRegistrationService, AuthRegistrationService>();
+builder.Services.AddScoped<IAuthLoginService, AuthLoginService>();
 
 var jwtSection = builder.Configuration.GetSection(JwtOptions.SectionName);
 var jwtConfig = jwtSection.Get<JwtOptions>() ?? new JwtOptions();

@@ -11,10 +11,14 @@ namespace Inventory.Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IAuthRegistrationService _registrationService;
+    private readonly IAuthLoginService _loginService;
 
-    public AuthController(IAuthRegistrationService registrationService)
+    public AuthController(
+        IAuthRegistrationService registrationService,
+        IAuthLoginService loginService)
     {
         _registrationService = registrationService;
+        _loginService = loginService;
     }
 
     [AllowAnonymous]
@@ -50,6 +54,39 @@ public class AuthController : ControllerBase
             }),
 
             _ => throw new InvalidOperationException("Unhandled registration result.")
+        };
+    }
+
+    [AllowAnonymous]
+    [HttpPost("login")]
+    [ProducesResponseType(typeof(AuthLoginResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> Login(
+        [FromBody] AuthLoginRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _loginService.LoginAsync(
+            request.Email,
+            request.Password,
+            cancellationToken);
+
+        return result switch
+        {
+            LoginResult.Success success => Ok(
+                AuthLoginResponse.From(success.Token, UserDto.FromAppUser(success.User))),
+
+            LoginResult.InvalidCredentials => Unauthorized(new ErrorResponse
+            {
+                Error = new ErrorBody
+                {
+                    Code = "unauthorized",
+                    Message = "Invalid email or password.",
+                    RequestId = HttpContext.TraceIdentifier
+                }
+            }),
+
+            _ => throw new InvalidOperationException("Unhandled login result.")
         };
     }
 }
