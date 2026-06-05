@@ -11,6 +11,9 @@ obj/
 !.env.example
 appsettings.*.local.json
 
+# Runtime product images
+src/Inventory.Api/wwwroot/uploads/products/
+
 # OS / IDE
 .DS_Store
 Thumbs.db

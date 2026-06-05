@@ -4,9 +4,11 @@ using System.Text.Json.Serialization;
 using Inventory.Api.Auth;
 using Inventory.Api.Common.Errors;
 using Inventory.Api.Data;
+using Inventory.Api.Products;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
@@ -60,6 +62,7 @@ builder.Services.AddDbContext<InventoryDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IProductImageStorage, LocalProductImageStorage>();
 
 builder.Services
     .AddOptions<JwtOptions>()
@@ -124,6 +127,10 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+var webRootPath = builder.Environment.WebRootPath
+    ?? Path.Combine(builder.Environment.ContentRootPath, "wwwroot");
+Directory.CreateDirectory(webRootPath);
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -144,6 +151,10 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(webRootPath)
+});
 
 app.UseAuthentication();
 app.UseAuthorization();

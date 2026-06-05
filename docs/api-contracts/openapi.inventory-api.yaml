@@ -1948,150 +1948,43 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /products/{productId}/image-upload-url:
+  /products/{productId}/image:
     parameters:
       - in: path
         name: productId
         required: true
         schema:
           type: string
-        description: Identifier of the product whose image is being uploaded.
+          format: uuid
+        description: Identifier of the product whose image is being replaced.
     post:
       tags:
         - Products
-      summary: Request a signed URL to upload a product image
+      summary: Upload a product image
       description: |
-        Returns short-lived instructions for the client to upload a
-        product image directly to object storage. The backend never
-        proxies the image bytes.
-
-        Implementation notes:
-
-        - Object-storage backends (S3, GCS, Azure Blob, Cloudflare R2)
-          should return a presigned `PUT` or `POST` URL with the required
-          headers.
-        - Firebase Storage implementations can adapt this flow by mapping
-          the response to a Firebase Storage upload task; the client uses
-          the Firebase Storage SDK to perform the actual upload while the
-          contract surface remains the same.
-
-        After the storage upload succeeds, the client calls
-        `POST /products/{productId}/image-upload-complete` so the backend
-        can persist `publicUrl` on the product. `Product.imageUrl` remains
-        the canonical persisted image reference.
-
-        External-product lookup suggestions already carry a hosted
-        `imageUrl`. Those values do not need to be re-uploaded unless the
-        application explicitly chooses to host its own copy.
+        Receives the image bytes as `multipart/form-data` in the `file`
+        field. The backend accepts JPEG, PNG, and WebP files up to 5 MB,
+        stores the file under `wwwroot/uploads/products`, and persists a
+        public relative path such as `/uploads/products/{fileName}` in
+        `Product.imageUrl`. The path is served by the backend as a static
+        file. A previous backend-managed product image is replaced after
+        the new value is persisted successfully.
       requestBody:
         required: true
         content:
-          application/json:
+          multipart/form-data:
             schema:
-              $ref: '#/components/schemas/ProductImageUploadRequest'
-            example:
-              contentType: image/jpeg
-              fileSize: 184320
-              originalFileName: arroz-1kg.jpg
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: JPEG, PNG, or WebP image with a maximum size of 5 MB.
       responses:
         '200':
-          description: Upload instructions issued.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProductImageUploadInstructions'
-              example:
-                uploadId: upl_product_rice_001_01
-                uploadUrl: https://storage.example.com/uploads/product_rice_001/1717358400-abc.jpg?signature=...
-                method: PUT
-                headers:
-                  Content-Type: image/jpeg
-                expiresAt: '2026-06-02T20:15:00Z'
-                publicUrl: https://cdn.example.com/product-images/product_rice_001/1717358400-abc.jpg
-        '400':
-          description: Validation error on the upload request.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          description: Missing or invalid access token.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '403':
-          description: Caller is not allowed to upload images for this product.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Product not found.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '413':
-          description: Requested file size exceeds the backend upload policy.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '415':
-          description: Requested content type is not supported.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '422':
-          description: |
-            The upload cannot proceed because the product is inactive or
-            the upload policy rejects the request. Possible `error.code`
-            values include `inactive_product` and `invalid_upload_policy`.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          description: Unexpected server error.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /products/{productId}/image-upload-complete:
-    parameters:
-      - in: path
-        name: productId
-        required: true
-        schema:
-          type: string
-        description: Identifier of the product whose image upload is being completed.
-    post:
-      tags:
-        - Products
-      summary: Confirm a product image upload and persist imageUrl
-      description: |
-        Confirms that the client finished uploading bytes through the
-        signed URL issued by `POST /products/{productId}/image-upload-url`.
-        On success, the backend persists the corresponding `publicUrl`
-        into `Product.imageUrl` and returns the updated `Product`.
-
-        If the upload session has expired before this call is made, the
-        request is rejected with HTTP 410 and the client must request a
-        new upload URL.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ProductImageUploadCompleteRequest'
-            example:
-              uploadId: upl_product_rice_001_01
-      responses:
-        '200':
-          description: Upload confirmed. Returns the updated product.
+          description: Image stored and product updated.
           content:
             application/json:
               schema:
@@ -2103,57 +1996,19 @@ paths:
                 barcode: '7441000000012'
                 category: Abarrotes
                 description: Bolsa de arroz 80% de 1 kilogramo.
-                imageUrl: https://cdn.example.com/product-images/product_rice_001/1717358400-abc.jpg
+                imageUrl: /uploads/products/product_rice_001-a1b2c3d4.jpg
                 minStock: 10
                 isActive: true
                 createdAt: '2026-06-02T20:00:00Z'
-                updatedAt: '2026-06-02T20:15:00Z'
+                updatedAt: '2026-06-05T20:15:00Z'
         '400':
-          description: Validation error on the completion request.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          description: Missing or invalid access token.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '403':
-          description: Caller is not allowed to confirm uploads for this product.
+          description: Missing or invalid file, invalid form, or invalid product identifier.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Product or upload session not found.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '410':
-          description: Upload session has expired and can no longer be confirmed.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-              example:
-                error:
-                  code: upload_session_expired
-                  message: The upload session has expired. Request a new upload URL and retry.
-                  requestId: req_image_upload_complete_01
-        '422':
-          description: |
-            The upload has not finished or is in an unconfirmable state.
-            Possible `error.code` values include `upload_not_completed`
-            and `invalid_upload_state`.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          description: Unexpected server error.
+          description: Product not found.
           content:
             application/json:
               schema:
@@ -2309,9 +2164,9 @@ components:
           example: Bolsa de arroz 80% de 1 kilogramo.
         imageUrl:
           type: string
-          format: uri
           nullable: true
-          example: https://example.com/images/arroz-1kg.jpg
+          description: Public relative path served by the backend for uploaded product images.
+          example: /uploads/products/product_rice_001-a1b2c3d4.jpg
         minStock:
           type: integer
           minimum: 0
@@ -2882,91 +2737,3 @@ components:
         hasNextPage:
           type: boolean
           example: true
-
-    ProductImageUploadRequest:
-      type: object
-      description: |
-        Request payload used to ask the backend for upload instructions
-        for a product image. The backend mints a short-lived signed URL
-        that the client uses to upload bytes directly to object storage.
-      required:
-        - contentType
-      properties:
-        contentType:
-          type: string
-          enum:
-            - image/jpeg
-            - image/png
-            - image/webp
-          example: image/jpeg
-        fileSize:
-          type: integer
-          format: int64
-          minimum: 1
-          description: Optional client-reported size of the file in bytes.
-          example: 184320
-        originalFileName:
-          type: string
-          description: Optional original file name, useful for backend logging.
-          example: arroz-1kg.jpg
-
-    ProductImageUploadInstructions:
-      type: object
-      description: |
-        Instructions returned by the backend so that the client can upload
-        the image bytes directly to object storage. The `uploadUrl` is
-        short-lived; the client must complete the upload and call
-        `POST /products/{productId}/image-upload-complete` before
-        `expiresAt`. `publicUrl` is the URL that will be persisted into
-        `Product.imageUrl` once the upload is confirmed.
-      required:
-        - uploadId
-        - uploadUrl
-        - method
-        - headers
-        - expiresAt
-        - publicUrl
-      properties:
-        uploadId:
-          type: string
-          example: upl_product_rice_001_01
-        uploadUrl:
-          type: string
-          format: uri
-          example: https://storage.example.com/uploads/product_rice_001/1717358400-abc.jpg?signature=...
-        method:
-          type: string
-          enum:
-            - PUT
-            - POST
-          example: PUT
-        headers:
-          type: object
-          additionalProperties:
-            type: string
-          description: |
-            Headers that the client must include in the upload request,
-            typically at least `Content-Type` matching the requested type.
-          example:
-            Content-Type: image/jpeg
-        expiresAt:
-          type: string
-          format: date-time
-          example: '2026-06-02T20:15:00Z'
-        publicUrl:
-          type: string
-          format: uri
-          example: https://cdn.example.com/product-images/product_rice_001/1717358400-abc.jpg
-
-    ProductImageUploadCompleteRequest:
-      type: object
-      description: |
-        Request payload sent to confirm that an image upload finished and
-        the backend should persist the corresponding `publicUrl` onto the
-        product.
-      required:
-        - uploadId
-      properties:
-        uploadId:
-          type: string
-          example: upl_product_rice_001_01
