@@ -90,6 +90,18 @@ public class StockEndpointTests : IClassFixture<InventoryApiFactory>
     }
 
     [Fact]
+    public async Task Get_Stock_Lookup_Returns_400_When_BranchId_Is_Not_A_Guid()
+    {
+        var data = await SeedStockAsync();
+
+        var response = await _client.GetAsync($"/stock/lookup?productId={data.CoffeeProductId}&branchId=not-a-guid");
+        var error = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_guid", error.GetProperty("code").GetString());
+    }
+
+    [Fact]
     public async Task Get_Stock_Lookup_Returns_404_When_Combination_Does_Not_Exist()
     {
         var data = await SeedStockAsync();
@@ -124,6 +136,18 @@ public class StockEndpointTests : IClassFixture<InventoryApiFactory>
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         Assert.Equal("stock_not_found", error.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task Get_Stock_By_Id_Returns_400_When_StockId_Is_Not_A_Guid()
+    {
+        await SeedStockAsync();
+
+        var response = await _client.GetAsync("/stock/not-a-guid");
+        var error = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_guid", error.GetProperty("code").GetString());
     }
 
     [Fact]
