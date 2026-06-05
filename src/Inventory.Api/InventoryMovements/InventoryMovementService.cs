@@ -162,16 +162,17 @@ public class InventoryMovementService : IInventoryMovementService
         }
 
         var total = await movements.CountAsync(cancellationToken);
-        var items = await movements
+        var movementItems = await movements
             .OrderByDescending(m => m.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(m => InventoryMovementResponse.FromEntity(m))
             .ToListAsync(cancellationToken);
 
         var response = new PaginatedResponse<InventoryMovementResponse>
         {
-            Items = items,
+            Items = movementItems
+                .Select(InventoryMovementResponse.FromEntity)
+                .ToList(),
             Total = total,
             Page = page,
             PageSize = pageSize,
