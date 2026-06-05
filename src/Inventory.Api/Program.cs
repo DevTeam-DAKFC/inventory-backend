@@ -1,14 +1,53 @@
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Inventory.Api.Auth;
+using Inventory.Api.Common.Errors;
 using Inventory.Api.Data;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+builder.Services
+    .AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+    });
+
+builder.Services.Configure<ApiBehaviorOptions>(options =>
+{
+    options.InvalidModelStateResponseFactory = context =>
+    {
+        var details = context.ModelState
+            .Where(kv => kv.Value is { Errors.Count: > 0 })
+            .SelectMany(kv => kv.Value!.Errors.Select(e => new FieldError(
+                Field: JsonNamingPolicy.CamelCase.ConvertName(kv.Key),
+                Message: string.IsNullOrWhiteSpace(e.ErrorMessage)
+                    ? e.Exception?.Message ?? "Invalid value."
+                    : e.ErrorMessage)))
+            .ToList();
+
+        var response = new ErrorResponse
+        {
+            Error = new ErrorBody
+            {
+                Code = "validation_error",
+                Message = "The request contains invalid fields.",
+                Details = details,
+                RequestId = context.HttpContext.TraceIdentifier
+            }
+        };
+
+        return new BadRequestObjectResult(response);
+    };
+});
+
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
@@ -29,6 +68,7 @@ builder.Services
 
 builder.Services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
 builder.Services.AddSingleton<ITokenService, JwtTokenService>();
+builder.Services.AddScoped<IAuthRegistrationService, AuthRegistrationService>();
 
 var jwtSection = builder.Configuration.GetSection(JwtOptions.SectionName);
 var jwtConfig = jwtSection.Get<JwtOptions>() ?? new JwtOptions();
