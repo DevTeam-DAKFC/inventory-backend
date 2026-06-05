@@ -96,6 +96,18 @@ Ya implementado en esta rama:
 - Migración inicial `InitialCreate` creada y aplicada localmente.
 - Documentación interactiva con Scalar en `/scalar/v1` y documento OpenAPI en `/openapi/v1.json`.
 
+## Imágenes de productos
+
+El backend recibe imágenes mediante `POST /products/{productId}/image` como
+`multipart/form-data`, usando el campo `file`. Se aceptan únicamente
+`image/jpeg`, `image/png` e `image/webp`, con un límite de 5 MB.
+
+Los archivos se guardan en `wwwroot/uploads/products/`. `Product.ImageUrl`
+almacena únicamente una ruta pública relativa con formato
+`/uploads/products/{fileName}`, servida por ASP.NET Core como archivo estático.
+Este flujo reemplaza los endpoints futuros `image-upload-url` e
+`image-upload-complete`.
+
 ## Pendiente (fuera del alcance de la base actual)
 
 Los siguientes elementos aún no están implementados y se irán habilitando en bloques posteriores:
