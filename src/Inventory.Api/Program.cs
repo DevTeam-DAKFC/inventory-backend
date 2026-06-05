@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Inventory.Api.Auth;
 using Inventory.Api.Common.Errors;
 using Inventory.Api.Data;
+using Inventory.Api.InventoryMovements;
 using Inventory.Api.Products;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
@@ -27,16 +28,16 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
     options.InvalidModelStateResponseFactory = context =>
     {
-      var details = context.ModelState
-          .Where(kv => kv.Value is { Errors.Count: > 0 })
-          .SelectMany(kv => kv.Value!.Errors.Select(e => new FieldError(
-              Field: string.IsNullOrWhiteSpace(kv.Key)
-                  ? "body"
-                  : JsonNamingPolicy.CamelCase.ConvertName(kv.Key),
-              Message: string.IsNullOrWhiteSpace(e.ErrorMessage)
-                  ? e.Exception?.Message ?? "Invalid value."
-                  : e.ErrorMessage)))
-          .ToList();
+        var details = context.ModelState
+            .Where(kv => kv.Value is { Errors.Count: > 0 })
+            .SelectMany(kv => kv.Value!.Errors.Select(e => new FieldError(
+                Field: string.IsNullOrWhiteSpace(kv.Key)
+                    ? "body"
+                    : JsonNamingPolicy.CamelCase.ConvertName(kv.Key),
+                Message: string.IsNullOrWhiteSpace(e.ErrorMessage)
+                    ? e.Exception?.Message ?? "Invalid value."
+                    : e.ErrorMessage)))
+            .ToList();
 
         var response = new ErrorResponse
         {
@@ -79,6 +80,7 @@ builder.Services.AddSingleton<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IAuthRegistrationService, AuthRegistrationService>();
 builder.Services.AddScoped<IAuthLoginService, AuthLoginService>();
 builder.Services.AddScoped<IAuthCurrentUserService, AuthCurrentUserService>();
+builder.Services.AddScoped<IInventoryMovementService, InventoryMovementService>();
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
