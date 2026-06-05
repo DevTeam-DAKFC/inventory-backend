@@ -11,6 +11,9 @@ builder.Services.AddOpenApi();
 builder.Services.AddDbContext<InventoryDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddAuthentication();
+builder.Services.AddAuthorization();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -20,9 +23,22 @@ if (app.Environment.IsDevelopment())
     app.MapScalarApiReference();
 }
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
+app.UseAuthentication();
 
 app.UseAuthorization();
+
+app.MapGet("/", () => Results.Ok(new
+{
+    status = "ok",
+    service = "Inventory.Api",
+    docs = "/scalar/v1",
+    health = "/health"
+}));
 
 app.MapControllers();
 
