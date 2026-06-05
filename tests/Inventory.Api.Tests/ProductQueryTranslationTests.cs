@@ -45,4 +45,31 @@ public class ProductQueryTranslationTests
         Assert.Contains("OFFSET", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("FETCH", sql, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void Product_Update_And_Deactivate_Queries_Are_Translatable_By_SqlServer()
+    {
+        var options = new DbContextOptionsBuilder<InventoryDbContext>()
+            .UseSqlServer("Server=(local);Database=TranslationOnly;User Id=sa;Password=unused;Encrypt=False;TrustServerCertificate=True;")
+            .Options;
+
+        using var dbContext = new InventoryDbContext(options);
+        var productId = Guid.NewGuid();
+
+        var findByIdSql = dbContext.Products
+            .Where(product => product.Id == productId)
+            .ToQueryString();
+        var duplicateSkuSql = dbContext.Products
+            .Where(product => product.Id != productId && product.Sku == "SKU")
+            .ToQueryString();
+        var duplicateBarcodeSql = dbContext.Products
+            .Where(product => product.Id != productId && product.Barcode == "BARCODE")
+            .ToQueryString();
+
+        Assert.Contains("WHERE", findByIdSql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("WHERE", duplicateSkuSql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("WHERE", duplicateBarcodeSql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("sku", duplicateSkuSql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("barcode", duplicateBarcodeSql, StringComparison.OrdinalIgnoreCase);
+    }
 }

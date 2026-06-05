@@ -364,6 +364,8 @@ public class ProductEndpointTests : IClassFixture<InventoryApiFactory>, IAsyncLi
     public async Task Get_Product_By_Id_Returns_Existing_Product_Including_Inactive_Without_Stock_Quantities()
     {
         var product = CreateProduct(name: "Inactive Product", sku: "INACTIVE-001", isActive: false);
+        product.CreatedAt = DateTime.SpecifyKind(product.CreatedAt, DateTimeKind.Unspecified);
+        product.UpdatedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
         await SeedProductsAsync(product);
 
         var response = await _client.GetAsync($"/products/{product.Id}");
@@ -374,6 +376,8 @@ public class ProductEndpointTests : IClassFixture<InventoryApiFactory>, IAsyncLi
         Assert.Equal(product.Id, payload.RootElement.GetProperty("id").GetGuid());
         Assert.Equal("Inactive Product", payload.RootElement.GetProperty("name").GetString());
         Assert.False(payload.RootElement.GetProperty("isActive").GetBoolean());
+        Assert.EndsWith("Z", payload.RootElement.GetProperty("createdAt").GetString());
+        Assert.EndsWith("Z", payload.RootElement.GetProperty("updatedAt").GetString());
         AssertProductDoesNotExposeStockQuantities(payload.RootElement);
     }
 
@@ -393,6 +397,338 @@ public class ProductEndpointTests : IClassFixture<InventoryApiFactory>, IAsyncLi
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         await AssertErrorResponseAsync(response, "validation_error", "productId");
+    }
+
+    [Theory]
+    [MemberData(nameof(SingleFieldPatchRequests))]
+    public async Task Patch_Product_Updates_Single_Field_And_Conserves_Omitted_Fields(
+        object request,
+        string expectedField,
+        object expectedValue)
+    {
+        var createdAt = DateTime.UtcNow.AddDays(-1);
+        var product = CreateProduct(name: "Original Name", sku: "ORIGINAL-SKU", barcode: "ORIGINAL-BAR", category: "Original", minStock: 5);
+        product.Description = "Original Description";
+        product.ImageUrl = "https://example.com/original.png";
+        product.CreatedAt = createdAt;
+        await SeedProductsAsync(product);
+
+        var response = await PatchAsJsonAsync($"/products/{product.Id}", request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var payload = await ReadJsonAsync(response);
+        AssertJsonValue(payload.RootElement, expectedField, expectedValue);
+        Assert.Equal(createdAt, payload.RootElement.GetProperty("createdAt").GetDateTime());
+        Assert.True(payload.RootElement.GetProperty("updatedAt").GetDateTime() > createdAt);
+
+        if (expectedField != "name")
+        {
+            Assert.Equal("Original Name", payload.RootElement.GetProperty("name").GetString());
+        }
+
+        if (expectedField != "sku")
+        {
+            Assert.Equal("ORIGINAL-SKU", payload.RootElement.GetProperty("sku").GetString());
+        }
+
+        if (expectedField != "category")
+        {
+            Assert.Equal("Original", payload.RootElement.GetProperty("category").GetString());
+        }
+    }
+
+    public static IEnumerable<object[]> SingleFieldPatchRequests()
+    {
+        yield return new object[] { new { name = "Updated Name" }, "name", "Updated Name" };
+        yield return new object[] { new { sku = "UPDATED-SKU" }, "sku", "UPDATED-SKU" };
+        yield return new object[] { new { category = "Updated Category" }, "category", "Updated Category" };
+        yield return new object[] { new { minStock = 9 }, "minStock", 9 };
+        yield return new object[] { new { barcode = "UPDATED-BAR" }, "barcode", "UPDATED-BAR" };
+    }
+
+    [Fact]
+    public async Task Patch_Product_Updates_Multiple_Fields_Trims_Outer_Spaces_And_Keeps_Internal_Spaces()
+    {
+        var createdAt = DateTime.UtcNow.AddDays(-1);
+        var product = CreateProduct(name: "Original", sku: "SKU-ORIGINAL", barcode: "BAR-ORIGINAL", category: "Original", minStock: 1);
+        product.CreatedAt = createdAt;
+        await SeedProductsAsync(product);
+
+        var response = await PatchAsJsonAsync($"/products/{product.Id}", new
+        {
+            name = "  Updated  Product  ",
+            sku = "  SKU-UPDATED  ",
+            category = "  Updated  Category  ",
+            description = "  Updated  Description  ",
+            imageUrl = "  https://example.com/updated.png  ",
+            minStock = 4
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var payload = await ReadJsonAsync(response);
+        Assert.Equal("Updated  Product", payload.RootElement.GetProperty("name").GetString());
+        Assert.Equal("SKU-UPDATED", payload.RootElement.GetProperty("sku").GetString());
+        Assert.Equal("Updated  Category", payload.RootElement.GetProperty("category").GetString());
+        Assert.Equal("Updated  Description", payload.RootElement.GetProperty("description").GetString());
+        Assert.Equal("https://example.com/updated.png", payload.RootElement.GetProperty("imageUrl").GetString());
+        Assert.Equal(4, payload.RootElement.GetProperty("minStock").GetInt32());
+        Assert.Equal("BAR-ORIGINAL", payload.RootElement.GetProperty("barcode").GetString());
+        Assert.Equal(createdAt, payload.RootElement.GetProperty("createdAt").GetDateTime());
+        Assert.True(payload.RootElement.GetProperty("updatedAt").GetDateTime() > createdAt);
+        AssertProductDoesNotExposeStockQuantities(payload.RootElement);
+    }
+
+    [Fact]
+    public async Task Patch_Product_Clears_Optional_Fields_With_Null_Empty_And_Spaces()
+    {
+        var product = CreateProduct(name: "Original", sku: "SKU-OPTIONAL", barcode: "BAR-OPTIONAL", category: "Original", minStock: 1);
+        product.Description = "Description";
+        product.ImageUrl = "https://example.com/image.png";
+        await SeedProductsAsync(product);
+
+        var clearWithNull = await PatchAsJsonAsync($"/products/{product.Id}", new
+        {
+            barcode = (string?)null,
+            description = (string?)null,
+            imageUrl = (string?)null
+        });
+
+        Assert.Equal(HttpStatusCode.OK, clearWithNull.StatusCode);
+        var nullPayload = await ReadJsonAsync(clearWithNull);
+        Assert.Equal(JsonValueKind.Null, nullPayload.RootElement.GetProperty("barcode").ValueKind);
+        Assert.Equal(JsonValueKind.Null, nullPayload.RootElement.GetProperty("description").ValueKind);
+        Assert.Equal(JsonValueKind.Null, nullPayload.RootElement.GetProperty("imageUrl").ValueKind);
+
+        var clearWithEmpty = await PatchAsJsonAsync($"/products/{product.Id}", new
+        {
+            barcode = "",
+            description = "   ",
+            imageUrl = ""
+        });
+
+        Assert.Equal(HttpStatusCode.OK, clearWithEmpty.StatusCode);
+        var emptyPayload = await ReadJsonAsync(clearWithEmpty);
+        Assert.Equal(JsonValueKind.Null, emptyPayload.RootElement.GetProperty("barcode").ValueKind);
+        Assert.Equal(JsonValueKind.Null, emptyPayload.RootElement.GetProperty("description").ValueKind);
+        Assert.Equal(JsonValueKind.Null, emptyPayload.RootElement.GetProperty("imageUrl").ValueKind);
+    }
+
+    [Fact]
+    public async Task Patch_Product_Conserves_Optional_Fields_When_Omitted()
+    {
+        var product = CreateProduct(name: "Original", sku: "SKU-CONSERVE", barcode: "BAR-CONSERVE", category: "Original", minStock: 1);
+        product.Description = "Description";
+        product.ImageUrl = "https://example.com/image.png";
+        await SeedProductsAsync(product);
+
+        var response = await PatchAsJsonAsync($"/products/{product.Id}", new { name = "Updated" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var payload = await ReadJsonAsync(response);
+        Assert.Equal("BAR-CONSERVE", payload.RootElement.GetProperty("barcode").GetString());
+        Assert.Equal("Description", payload.RootElement.GetProperty("description").GetString());
+        Assert.Equal("https://example.com/image.png", payload.RootElement.GetProperty("imageUrl").GetString());
+    }
+
+    [Fact]
+    public async Task Patch_Product_Uses_AspNetCore_CaseInsensitive_Json_Property_Convention()
+    {
+        var product = CreateProduct(name: "Original", sku: "SKU-CASE");
+        await SeedProductsAsync(product);
+
+        var response = await PatchRawAsync($"/products/{product.Id}", """{"Name":"Updated Case","MinStock":6}""");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var payload = await ReadJsonAsync(response);
+        Assert.Equal("Updated Case", payload.RootElement.GetProperty("name").GetString());
+        Assert.Equal(6, payload.RootElement.GetProperty("minStock").GetInt32());
+    }
+
+    [Theory]
+    [InlineData("{}", "body")]
+    [InlineData("null", "body")]
+    [InlineData("""{"isActive":false}""", "isActive")]
+    public async Task Patch_Product_Returns_Validation_Error_For_Empty_Null_Or_Non_Updatable_Body(string body, string expectedField)
+    {
+        var product = CreateProduct(name: "Original", sku: "SKU-BODY");
+        await SeedProductsAsync(product);
+
+        var response = await PatchRawAsync($"/products/{product.Id}", body);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        await AssertErrorResponseAsync(response, "validation_error", expectedField);
+    }
+
+    [Fact]
+    public async Task Patch_Product_Returns_Validation_Error_For_Empty_Request_Body()
+    {
+        var product = CreateProduct(name: "Original", sku: "SKU-EMPTY-BODY");
+        await SeedProductsAsync(product);
+
+        var response = await _client.SendAsync(new HttpRequestMessage(HttpMethod.Patch, $"/products/{product.Id}")
+        {
+            Content = new StringContent("", Encoding.UTF8, "application/json")
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        await AssertErrorResponseAsync(response, "validation_error", "body");
+    }
+
+    [Fact]
+    public async Task Patch_Product_Returns_NotFound_And_Invalid_Guid_Errors()
+    {
+        var notFound = await PatchAsJsonAsync($"/products/{Guid.NewGuid()}", new { name = "Updated" });
+        var invalidGuid = await PatchAsJsonAsync("/products/not-a-guid", new { name = "Updated" });
+
+        Assert.Equal(HttpStatusCode.NotFound, notFound.StatusCode);
+        await AssertErrorResponseAsync(notFound, "not_found", "productId");
+
+        Assert.Equal(HttpStatusCode.BadRequest, invalidGuid.StatusCode);
+        await AssertErrorResponseAsync(invalidGuid, "validation_error", "productId");
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidPatchRequests))]
+    public async Task Patch_Product_Returns_Validation_Error_For_Invalid_Request(string body, string expectedField)
+    {
+        var product = CreateProduct(name: "Original", sku: "SKU-INVALID-PATCH", category: "Original");
+        await SeedProductsAsync(product);
+
+        var response = await PatchRawAsync($"/products/{product.Id}", body);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        await AssertErrorResponseAsync(response, "validation_error", expectedField);
+    }
+
+    public static IEnumerable<object[]> InvalidPatchRequests()
+    {
+        yield return new object[] { """{"name":""}""", "name" };
+        yield return new object[] { """{"name":null}""", "name" };
+        yield return new object[] { """{"sku":"   "}""", "sku" };
+        yield return new object[] { """{"sku":null}""", "sku" };
+        yield return new object[] { """{"category":null}""", "category" };
+        yield return new object[] { """{"category":"   "}""", "category" };
+        yield return new object[] { $$"""{"name":"{{new string('a', 151)}}"}""", "name" };
+        yield return new object[] { $$"""{"sku":"{{new string('a', 101)}}"}""", "sku" };
+        yield return new object[] { $$"""{"barcode":"{{new string('a', 33)}}"}""", "barcode" };
+        yield return new object[] { $$"""{"category":"{{new string('a', 101)}}"}""", "category" };
+        yield return new object[] { $$"""{"description":"{{new string('a', 501)}}"}""", "description" };
+        yield return new object[] { $$"""{"imageUrl":"{{new string('a', 1001)}}"}""", "imageUrl" };
+        yield return new object[] { """{"minStock":-1}""", "minStock" };
+        yield return new object[] { """{"imageUrl":"not-a-uri"}""", "imageUrl" };
+        yield return new object[] { """{"minStock":null}""", "minStock" };
+        yield return new object[] { """{"minStock":1.5}""", "minStock" };
+        yield return new object[] { """{"minStock":"abc"}""", "minStock" };
+        yield return new object[] { """{"MinStock":"abc"}""", "minStock" };
+        yield return new object[] { """{"minStock":true}""", "minStock" };
+        yield return new object[] { """{"minStock":{}}""", "minStock" };
+        yield return new object[] { """{"minStock":[]}""", "minStock" };
+        yield return new object[] { """{"id":"4ea15cc4-7f4d-4062-8c4a-2213be43a511"}""", "id" };
+        yield return new object[] { """{"createdAt":"2026-01-01T00:00:00Z"}""", "createdAt" };
+        yield return new object[] { """{"updatedAt":"2026-01-01T00:00:00Z"}""", "updatedAt" };
+        yield return new object[] { """{"stock":1}""", "stock" };
+        yield return new object[] { """{"quantity":1}""", "quantity" };
+        yield return new object[] { """{"currentStock":1}""", "currentStock" };
+        yield return new object[] { """{"availableQuantity":1}""", "availableQuantity" };
+        yield return new object[] { "{", "$" };
+    }
+
+    [Fact]
+    public async Task Patch_Product_Handles_Sku_And_Barcode_Conflicts_And_Allows_Current_Values()
+    {
+        var first = CreateProduct(name: "First", sku: "FIRST-SKU", barcode: "FIRST-BAR");
+        var second = CreateProduct(name: "Second", sku: "SECOND-SKU", barcode: "SECOND-BAR");
+        await SeedProductsAsync(first, second);
+
+        var duplicateSku = await PatchAsJsonAsync($"/products/{first.Id}", new { sku = "SECOND-SKU" });
+        var sameSku = await PatchAsJsonAsync($"/products/{first.Id}", new { sku = "FIRST-SKU" });
+        var duplicateBarcode = await PatchAsJsonAsync($"/products/{first.Id}", new { barcode = "SECOND-BAR" });
+        var sameBarcode = await PatchAsJsonAsync($"/products/{first.Id}", new { barcode = "FIRST-BAR" });
+        var clearBarcode = await PatchAsJsonAsync($"/products/{first.Id}", new { barcode = (string?)null });
+        var secondClearBarcode = await PatchAsJsonAsync($"/products/{second.Id}", new { barcode = "   " });
+
+        Assert.Equal(HttpStatusCode.Conflict, duplicateSku.StatusCode);
+        await AssertErrorResponseAsync(duplicateSku, "conflict", "sku");
+
+        Assert.Equal(HttpStatusCode.OK, sameSku.StatusCode);
+
+        Assert.Equal(HttpStatusCode.Conflict, duplicateBarcode.StatusCode);
+        await AssertErrorResponseAsync(duplicateBarcode, "conflict", "barcode");
+
+        Assert.Equal(HttpStatusCode.OK, sameBarcode.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, clearBarcode.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, secondClearBarcode.StatusCode);
+    }
+
+    [Fact]
+    public async Task Patch_Product_Deactivate_Active_Product_Returns_NoContent_And_Preserves_Stock()
+    {
+        var product = CreateProduct(name: "Active Product", sku: "ACTIVE-DEACTIVATE", minStock: 1);
+        var branchId = Guid.NewGuid();
+        var stock = CreateStock(product.Id, branchId, availableQuantity: 7);
+        await SeedProductsAsync(
+            new[] { product },
+            new[] { CreateBranch(branchId) },
+            new[] { stock });
+
+        var response = await _client.PatchAsync($"/products/{product.Id}/deactivate", content: null);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var updatedProduct = await dbContext.Products.FindAsync(product.Id);
+        var persistedStock = await dbContext.Stocks.FindAsync(stock.Id);
+
+        Assert.NotNull(updatedProduct);
+        Assert.False(updatedProduct!.IsActive);
+        Assert.NotNull(updatedProduct.UpdatedAt);
+        Assert.NotNull(persistedStock);
+        Assert.Equal(7, persistedStock!.AvailableQuantity);
+        Assert.Equal(product.Id, persistedStock.ProductId);
+
+        var detail = await _client.GetAsync($"/products/{product.Id}");
+        Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
+        var detailPayload = await ReadJsonAsync(detail);
+        Assert.False(detailPayload.RootElement.GetProperty("isActive").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Patch_Product_Deactivate_Inactive_Product_Is_Idempotent()
+    {
+        var updatedAt = DateTime.UtcNow.AddDays(-1);
+        var product = CreateProduct(name: "Inactive Product", sku: "INACTIVE-DEACTIVATE", isActive: false);
+        product.UpdatedAt = updatedAt;
+        await SeedProductsAsync(product);
+
+        var response = await _client.PatchAsync($"/products/{product.Id}/deactivate", content: null);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var persisted = await dbContext.Products.FindAsync(product.Id);
+
+        Assert.NotNull(persisted);
+        Assert.False(persisted!.IsActive);
+        Assert.Equal(updatedAt, persisted.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task Patch_Product_Deactivate_Returns_NotFound_And_Invalid_Guid_Errors()
+    {
+        var notFound = await _client.PatchAsync($"/products/{Guid.NewGuid()}/deactivate", content: null);
+        var invalidGuid = await _client.PatchAsync("/products/not-a-guid/deactivate", content: null);
+
+        Assert.Equal(HttpStatusCode.NotFound, notFound.StatusCode);
+        await AssertErrorResponseAsync(notFound, "not_found", "productId");
+
+        Assert.Equal(HttpStatusCode.BadRequest, invalidGuid.StatusCode);
+        await AssertErrorResponseAsync(invalidGuid, "validation_error", "productId");
     }
 
     private async Task SeedProductsAsync(params Product[] products) =>
@@ -453,6 +789,18 @@ public class ProductEndpointTests : IClassFixture<InventoryApiFactory>, IAsyncLi
         return JsonDocument.Parse(content);
     }
 
+    private async Task<HttpResponseMessage> PatchAsJsonAsync(string url, object request) =>
+        await _client.SendAsync(new HttpRequestMessage(HttpMethod.Patch, url)
+        {
+            Content = JsonContent.Create(request)
+        });
+
+    private async Task<HttpResponseMessage> PatchRawAsync(string url, string body) =>
+        await _client.SendAsync(new HttpRequestMessage(HttpMethod.Patch, url)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        });
+
     private static async Task AssertErrorResponseAsync(HttpResponseMessage response, string expectedCode, string expectedField)
     {
         var payload = await ReadJsonAsync(response);
@@ -473,5 +821,21 @@ public class ProductEndpointTests : IClassFixture<InventoryApiFactory>, IAsyncLi
         Assert.False(product.TryGetProperty("quantity", out _));
         Assert.False(product.TryGetProperty("currentStock", out _));
         Assert.False(product.TryGetProperty("availableQuantity", out _));
+    }
+
+    private static void AssertJsonValue(JsonElement element, string propertyName, object expectedValue)
+    {
+        var property = element.GetProperty(propertyName);
+        switch (expectedValue)
+        {
+            case int intValue:
+                Assert.Equal(intValue, property.GetInt32());
+                break;
+            case string stringValue:
+                Assert.Equal(stringValue, property.GetString());
+                break;
+            default:
+                throw new InvalidOperationException($"Unexpected expected value type {expectedValue.GetType()}.");
+        }
     }
 }

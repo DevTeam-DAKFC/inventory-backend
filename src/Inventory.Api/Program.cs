@@ -14,7 +14,7 @@ builder.Services.AddControllers()
             var details = context.ModelState
                 .Where(entry => entry.Value?.Errors.Count > 0)
                 .SelectMany(entry => entry.Value!.Errors.Select(error =>
-                    new FieldError(entry.Key, string.IsNullOrWhiteSpace(error.ErrorMessage)
+                    new FieldError(string.IsNullOrWhiteSpace(entry.Key) ? "body" : entry.Key, string.IsNullOrWhiteSpace(error.ErrorMessage)
                         ? "The field is invalid."
                         : error.ErrorMessage)))
                 .ToArray();

@@ -5,6 +5,7 @@ using Inventory.Api.Data;
 using Inventory.Api.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace Inventory.Api.Controllers;
 
@@ -15,6 +16,16 @@ public class ProductsController : ControllerBase
     private const int DefaultPage = 1;
     private const int DefaultPageSize = 20;
     private const int MaxPageSize = 100;
+    private static readonly Dictionary<string, string> UpdatableProductFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["name"] = "name",
+        ["sku"] = "sku",
+        ["barcode"] = "barcode",
+        ["category"] = "category",
+        ["description"] = "description",
+        ["imageUrl"] = "imageUrl",
+        ["minStock"] = "minStock"
+    };
 
     private readonly InventoryDbContext _dbContext;
 
@@ -157,12 +168,9 @@ public class ProductsController : ControllerBase
     [HttpGet("{productId}")]
     public async Task<IActionResult> GetProductById(string productId, CancellationToken cancellationToken)
     {
-        if (!Guid.TryParse(productId, out var parsedProductId))
+        if (!TryParseProductId(productId, out var parsedProductId, out var invalidIdResult))
         {
-            return BadRequest(CreateError(
-                "validation_error",
-                "The request contains invalid fields.",
-                new[] { new FieldError("productId", "productId must be a valid GUID.") }));
+            return invalidIdResult;
         }
 
         var product = await _dbContext.Products
@@ -180,6 +188,120 @@ public class ProductsController : ControllerBase
         return Ok(ToResponse(product));
     }
 
+    [HttpPatch("{productId}")]
+    public async Task<IActionResult> UpdateProduct(
+        string productId,
+        [FromBody] JsonElement body,
+        CancellationToken cancellationToken)
+    {
+        if (!TryParseProductId(productId, out var parsedProductId, out var invalidIdResult))
+        {
+            return invalidIdResult;
+        }
+
+        var (request, parseErrors) = ParseUpdateRequest(body);
+        if (parseErrors.Count > 0)
+        {
+            return BadRequest(CreateError(
+                "validation_error",
+                "The request contains invalid fields.",
+                parseErrors));
+        }
+
+        if (!request.HasAnyUpdatableField)
+        {
+            return BadRequest(CreateError(
+                "validation_error",
+                "The request contains invalid fields.",
+                new[] { new FieldError("body", "At least one updatable field must be provided.") }));
+        }
+
+        var validationErrors = ValidateUpdateRequest(request);
+        if (validationErrors.Count > 0)
+        {
+            return BadRequest(CreateError(
+                "validation_error",
+                "The request contains invalid fields.",
+                validationErrors));
+        }
+
+        var product = await _dbContext.Products
+            .FirstOrDefaultAsync(product => product.Id == parsedProductId, cancellationToken);
+
+        if (product is null)
+        {
+            return NotFound(CreateError(
+                "not_found",
+                "Product was not found.",
+                new[] { new FieldError("productId", "Product was not found.") }));
+        }
+
+        var newSku = request.Sku.IsPresent ? request.Sku.Value!.Trim() : product.Sku;
+        var newBarcode = request.Barcode.IsPresent ? TrimToNull(request.Barcode.Value) : product.Barcode;
+
+        if (request.Sku.IsPresent &&
+            await _dbContext.Products.AnyAsync(existing => existing.Id != product.Id && existing.Sku == newSku, cancellationToken))
+        {
+            return Conflict(CreateConflict("sku", "A product with this sku already exists.", "sku must be unique within the catalog."));
+        }
+
+        if (request.Barcode.IsPresent &&
+            newBarcode is not null &&
+            await _dbContext.Products.AnyAsync(existing => existing.Id != product.Id && existing.Barcode == newBarcode, cancellationToken))
+        {
+            return Conflict(CreateConflict("barcode", "A product with this barcode already exists.", "barcode must be unique within the catalog."));
+        }
+
+        ApplyUpdate(product, request);
+        product.UpdatedAt = DateTime.UtcNow;
+
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception) when (IsUniqueConstraintViolation(exception, "UX_products_sku"))
+        {
+            return Conflict(CreateConflict("sku", "A product with this sku already exists.", "sku must be unique within the catalog."));
+        }
+        catch (DbUpdateException exception) when (newBarcode is not null && IsUniqueConstraintViolation(exception, "UX_products_barcode_filtered"))
+        {
+            return Conflict(CreateConflict("barcode", "A product with this barcode already exists.", "barcode must be unique within the catalog."));
+        }
+
+        return Ok(ToResponse(product));
+    }
+
+    [HttpPatch("{productId}/deactivate")]
+    public async Task<IActionResult> DeactivateProduct(string productId, CancellationToken cancellationToken)
+    {
+        if (!TryParseProductId(productId, out var parsedProductId, out var invalidIdResult))
+        {
+            return invalidIdResult;
+        }
+
+        var product = await _dbContext.Products
+            .FirstOrDefaultAsync(product => product.Id == parsedProductId, cancellationToken);
+
+        if (product is null)
+        {
+            return NotFound(CreateError(
+                "not_found",
+                "Product was not found.",
+                new[] { new FieldError("productId", "Product was not found.") }));
+        }
+
+        if (!product.IsActive)
+        {
+            return NoContent();
+        }
+
+        product.IsActive = false;
+        product.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return NoContent();
+    }
+
     private static ProductResponse ToResponse(Product product) =>
         new(
             product.Id,
@@ -191,8 +313,8 @@ public class ProductsController : ControllerBase
             product.ImageUrl,
             product.MinStock,
             product.IsActive,
-            product.CreatedAt,
-            product.UpdatedAt);
+            AsUtc(product.CreatedAt),
+            product.UpdatedAt.HasValue ? AsUtc(product.UpdatedAt.Value) : null);
 
     private static List<FieldError> ValidatePagination(int page, int pageSize)
     {
@@ -241,6 +363,188 @@ public class ProductsController : ControllerBase
         return errors;
     }
 
+    private static (ProductUpdateRequest Request, List<FieldError> Errors) ParseUpdateRequest(JsonElement body)
+    {
+        var errors = new List<FieldError>();
+        var request = new ProductUpdateRequest(
+            PatchField<string>.Missing,
+            PatchField<string>.Missing,
+            PatchField<string>.Missing,
+            PatchField<string>.Missing,
+            PatchField<string>.Missing,
+            PatchField<string>.Missing,
+            PatchField<int>.Missing);
+
+        if (body.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            errors.Add(new FieldError("body", "Request body is required."));
+            return (request, errors);
+        }
+
+        if (body.ValueKind != JsonValueKind.Object)
+        {
+            errors.Add(new FieldError("body", "Request body must be a JSON object."));
+            return (request, errors);
+        }
+
+        PatchField<string> name = PatchField<string>.Missing;
+        PatchField<string> sku = PatchField<string>.Missing;
+        PatchField<string> barcode = PatchField<string>.Missing;
+        PatchField<string> category = PatchField<string>.Missing;
+        PatchField<string> description = PatchField<string>.Missing;
+        PatchField<string> imageUrl = PatchField<string>.Missing;
+        PatchField<int> minStock = PatchField<int>.Missing;
+
+        foreach (var property in body.EnumerateObject())
+        {
+            if (!UpdatableProductFields.TryGetValue(property.Name, out var fieldName))
+            {
+                errors.Add(new FieldError(property.Name, $"{property.Name} is not an updatable field."));
+                continue;
+            }
+
+            switch (fieldName)
+            {
+                case "name":
+                    name = ReadOptionalString(property, fieldName, errors);
+                    break;
+                case "sku":
+                    sku = ReadOptionalString(property, fieldName, errors);
+                    break;
+                case "barcode":
+                    barcode = ReadOptionalString(property, fieldName, errors);
+                    break;
+                case "category":
+                    category = ReadOptionalString(property, fieldName, errors);
+                    break;
+                case "description":
+                    description = ReadOptionalString(property, fieldName, errors);
+                    break;
+                case "imageUrl":
+                    imageUrl = ReadOptionalString(property, fieldName, errors);
+                    break;
+                case "minStock":
+                    minStock = ReadOptionalInt(property, fieldName, errors);
+                    break;
+            }
+        }
+
+        return (new ProductUpdateRequest(name, sku, barcode, category, description, imageUrl, minStock), errors);
+    }
+
+    private static PatchField<string> ReadOptionalString(JsonProperty property, string fieldName, List<FieldError> errors)
+    {
+        if (property.Value.ValueKind == JsonValueKind.Null)
+        {
+            return PatchField<string>.Present(null);
+        }
+
+        if (property.Value.ValueKind != JsonValueKind.String)
+        {
+            errors.Add(new FieldError(fieldName, $"{fieldName} must be a string."));
+            return PatchField<string>.Missing;
+        }
+
+        return PatchField<string>.Present(property.Value.GetString());
+    }
+
+    private static PatchField<int> ReadOptionalInt(JsonProperty property, string fieldName, List<FieldError> errors)
+    {
+        if (property.Value.ValueKind != JsonValueKind.Number || !property.Value.TryGetInt32(out var value))
+        {
+            errors.Add(new FieldError(fieldName, $"{fieldName} must be an integer."));
+            return PatchField<int>.Missing;
+        }
+
+        return PatchField<int>.Present(value);
+    }
+
+    private static List<FieldError> ValidateUpdateRequest(ProductUpdateRequest request)
+    {
+        var errors = new List<FieldError>();
+
+        if (request.Name.IsPresent)
+        {
+            ValidateRequiredText(request.Name.Value, "name", "Name is required.", 150, errors);
+        }
+
+        if (request.Sku.IsPresent)
+        {
+            ValidateRequiredText(request.Sku.Value, "sku", "Sku is required.", 100, errors);
+        }
+
+        if (request.Category.IsPresent)
+        {
+            ValidateRequiredText(request.Category.Value, "category", "Category is required.", 100, errors);
+        }
+
+        if (request.Barcode.IsPresent)
+        {
+            ValidateOptionalText(request.Barcode.Value, "barcode", 32, errors);
+        }
+
+        if (request.Description.IsPresent)
+        {
+            ValidateOptionalText(request.Description.Value, "description", 500, errors);
+        }
+
+        if (request.ImageUrl.IsPresent)
+        {
+            ValidateOptionalText(request.ImageUrl.Value, "imageUrl", 1000, errors);
+            var imageUrl = TrimToNull(request.ImageUrl.Value);
+            if (imageUrl is not null &&
+                !Uri.TryCreate(imageUrl, UriKind.Absolute, out _))
+            {
+                errors.Add(new FieldError("imageUrl", "imageUrl must be a valid URI."));
+            }
+        }
+
+        if (request.MinStock.IsPresent && request.MinStock.Value < 0)
+        {
+            errors.Add(new FieldError("minStock", "minStock must be greater than or equal to 0."));
+        }
+
+        return errors;
+    }
+
+    private static void ApplyUpdate(Product product, ProductUpdateRequest request)
+    {
+        if (request.Name.IsPresent)
+        {
+            product.Name = request.Name.Value!.Trim();
+        }
+
+        if (request.Sku.IsPresent)
+        {
+            product.Sku = request.Sku.Value!.Trim();
+        }
+
+        if (request.Barcode.IsPresent)
+        {
+            product.Barcode = TrimToNull(request.Barcode.Value);
+        }
+
+        if (request.Category.IsPresent)
+        {
+            product.Category = request.Category.Value!.Trim();
+        }
+
+        if (request.Description.IsPresent)
+        {
+            product.Description = TrimToNull(request.Description.Value);
+        }
+
+        if (request.ImageUrl.IsPresent)
+        {
+            product.ImageUrl = TrimToNull(request.ImageUrl.Value);
+        }
+
+        if (request.MinStock.IsPresent)
+        {
+            product.MinStock = request.MinStock.Value;
+        }
+    }
+
     private static void ValidateRequiredText(
         string? value,
         string field,
@@ -283,6 +587,21 @@ public class ProductsController : ControllerBase
     private ErrorResponse CreateError(string code, string message, IReadOnlyList<FieldError> details) =>
         new(new ErrorBody(code, message, details, HttpContext.TraceIdentifier));
 
+    private bool TryParseProductId(string productId, out Guid parsedProductId, out IActionResult invalidIdResult)
+    {
+        if (Guid.TryParse(productId, out parsedProductId))
+        {
+            invalidIdResult = null!;
+            return true;
+        }
+
+        invalidIdResult = BadRequest(CreateError(
+            "validation_error",
+            "The request contains invalid fields.",
+            new[] { new FieldError("productId", "productId must be a valid GUID.") }));
+        return false;
+    }
+
     private static string? TrimToNull(string? value)
     {
         var trimmed = value?.Trim();
@@ -291,4 +610,7 @@ public class ProductsController : ControllerBase
 
     private static bool IsUniqueConstraintViolation(DbUpdateException exception, string indexName) =>
         exception.InnerException?.Message.Contains(indexName, StringComparison.OrdinalIgnoreCase) == true;
+
+    private static DateTime AsUtc(DateTime value) =>
+        value.Kind == DateTimeKind.Utc ? value : DateTime.SpecifyKind(value, DateTimeKind.Utc);
 }
