@@ -115,6 +115,34 @@ public class InventoryMovementsController : ControllerBase
         };
     }
 
+    [HttpGet("{movementId}")]
+    [ProducesResponseType(typeof(InventoryMovementResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetById(
+        string movementId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _movementService.GetByIdAsync(movementId, cancellationToken);
+
+        return result switch
+        {
+            GetInventoryMovementResult.Success success => Ok(success.Movement),
+
+            GetInventoryMovementResult.ValidationFailed validation => BadRequest(CreateError(
+                "validation_error",
+                "The request contains invalid fields.",
+                validation.Details)),
+
+            GetInventoryMovementResult.NotFound => NotFound(CreateError(
+                "not_found",
+                "Inventory movement not found.")),
+
+            _ => throw new InvalidOperationException("Unhandled inventory movement detail result.")
+        };
+    }
+
     private ErrorResponse CreateError(
         string code,
         string message,
