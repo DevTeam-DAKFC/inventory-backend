@@ -1,0 +1,2972 @@
+openapi: 3.0.3
+
+info:
+  title: Inventory Mobile API
+  description: |
+    Este archivo OpenAPI define el contrato REST esperado para la aplicacion
+    movil de inventario.
+
+    Direccion planificada:
+    - La implementacion prevista del backend es ASP.NET Core Web API.
+    - Flutter consumira esta API usando Dio / HttpClient.
+    - SQL Server sera la capa de persistencia planificada detras del backend.
+    - Docker y Docker Compose se usaran para la infraestructura del backend.
+
+    Estado:
+    - Este contrato no implica que el backend, SQL Server o Docker Compose ya
+      esten implementados o configurados.
+    - Los endpoints, esquemas y ejemplos describen la forma esperada de la
+      integracion cuando el backend este disponible.
+
+    Relacion con Firebase:
+    - Firebase no es la capa principal de persistencia del sistema.
+    - Firebase sigue siendo relevante para Firebase Cloud Messaging (FCM).
+    - Firebase Storage puede usarse opcionalmente para imagenes de productos si
+      el equipo decide adoptarlo.
+  version: 1.0.0
+
+servers:
+  - url: https://api.inventory.example.com
+    description: Production-like environment placeholder.
+  - url: http://localhost:8080
+    description: Local development environment.
+
+tags:
+  - name: Auth
+    description: Authentication and current-user retrieval. MVP-critical.
+  - name: Users
+    description: User profile, role and branch assignment management.
+  - name: Branches
+    description: Store branches that hold inventory.
+  - name: Products
+    description: Product catalog. Stock is not embedded in product records.
+  - name: Stock
+    description: Read-only balances of available quantity by product and branch.
+  - name: InventoryMovements
+    description: Write path for incoming and outgoing inventory movements.
+  - name: ProductLookup
+    description: External-product suggestion lookup, decoupled from the upstream provider.
+  - name: NotificationTokens
+    description: Device push notification token registration.
+  - name: ImportBatches
+    description: Optional CSV import lifecycle for bulk product loading.
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  /auth/register:
+    post:
+      tags:
+        - Auth
+      summary: Register a new user
+      description: |
+        MVP-critical. Creates a new user account from a public registration
+        request. The response includes an access token so that the client
+        does not need to call `/auth/login` immediately after registering.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRegisterRequest'
+      responses:
+        '201':
+          description: User registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthLoginResponse'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Email already registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: conflict
+                  message: Email already registered.
+                  details:
+                    - field: email
+                      message: An account with this email already exists.
+                  requestId: req_register_01
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/login:
+    post:
+      tags:
+        - Auth
+      summary: Log in with email and password
+      description: |
+        MVP-critical. Exchanges credentials for an access token and returns
+        the authenticated user profile.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthLoginRequest'
+      responses:
+        '200':
+          description: Login successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthLoginResponse'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: unauthorized
+                  message: Invalid email or password.
+                  requestId: req_login_01
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/me:
+    get:
+      tags:
+        - Auth
+      summary: Get current authenticated user
+      description: |
+        MVP-critical. Returns the profile of the authenticated user, derived
+        from the bearer token. The application uses this endpoint to
+        rehydrate the session after launch.
+      responses:
+        '200':
+          description: Current user profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/logout:
+    post:
+      tags:
+        - Auth
+      summary: Invalidate the current session
+      description: |
+        Invalidates the access token associated with the current session.
+        Whether the token is revoked server-side or only discarded by the
+        client depends on the backend implementation.
+      responses:
+        '204':
+          description: Session invalidated.
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users:
+    get:
+      tags:
+        - Users
+      summary: List users
+      description: |
+        Admin-oriented listing of users with optional filters. Non-admin
+        callers should use `GET /auth/me` to read their own profile.
+      parameters:
+        - in: query
+          name: role
+          required: false
+          schema:
+            $ref: '#/components/schemas/UserRole'
+          description: Filter by user role.
+        - in: query
+          name: branchId
+          required: false
+          schema:
+            type: string
+          description: Filter by branch assignment.
+        - in: query
+          name: isActive
+          required: false
+          schema:
+            type: boolean
+          description: Filter by active status.
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number, starting at 1.
+        - in: query
+          name: pageSize
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of items per page.
+      responses:
+        '200':
+          description: Paginated list of users.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to list users.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags:
+        - Users
+      summary: Create a user (admin-side)
+      description: |
+        Admin-driven user creation. Allows assigning `role` and `branchIds`
+        without exchanging a password. For public credentialed registration
+        use `POST /auth/register`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreateRequest'
+      responses:
+        '201':
+          description: User created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to create users.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Email already registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/{userId}:
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the user.
+    get:
+      tags:
+        - Users
+      summary: Get user by id
+      responses:
+        '200':
+          description: User detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to read this user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      tags:
+        - Users
+      summary: Update user
+      description: |
+        Updates editable fields on a user profile. Only the fields included
+        in the request body are modified.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateRequest'
+      responses:
+        '200':
+          description: User updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to update this user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Conflict updating user, such as a duplicate email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/{userId}/deactivate:
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the user.
+    patch:
+      tags:
+        - Users
+      summary: Deactivate user
+      description: |
+        Soft-deactivates a user. The user record is preserved for traceability
+        of historical movements.
+      responses:
+        '204':
+          description: User deactivated.
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to deactivate this user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /branches:
+    get:
+      tags:
+        - Branches
+      summary: List branches
+      parameters:
+        - in: query
+          name: isActive
+          required: false
+          schema:
+            type: boolean
+          description: Filter by active status.
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number, starting at 1.
+        - in: query
+          name: pageSize
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of items per page.
+      responses:
+        '200':
+          description: Paginated list of branches.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Branch'
+        '400':
+          description: Invalid query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to list branches.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags:
+        - Branches
+      summary: Create branch
+      description: Admin-driven branch creation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BranchCreateRequest'
+      responses:
+        '201':
+          description: Branch created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Branch'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to create branches.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Branch name already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /branches/{branchId}:
+    parameters:
+      - in: path
+        name: branchId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the branch.
+    get:
+      tags:
+        - Branches
+      summary: Get branch by id
+      responses:
+        '200':
+          description: Branch detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Branch'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to read this branch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Branch not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      tags:
+        - Branches
+      summary: Update branch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BranchUpdateRequest'
+      responses:
+        '200':
+          description: Branch updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Branch'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to update this branch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Branch not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Conflict updating branch, such as a duplicate name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /branches/{branchId}/deactivate:
+    parameters:
+      - in: path
+        name: branchId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the branch.
+    patch:
+      tags:
+        - Branches
+      summary: Deactivate branch
+      description: |
+        Soft-deactivates a branch. Existing stock and historical movements
+        are preserved for traceability. An inactive branch should not be
+        used to register new movements.
+      responses:
+        '204':
+          description: Branch deactivated.
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to deactivate this branch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Branch not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /products:
+    get:
+      tags:
+        - Products
+      summary: List products
+      description: |
+        Catalog listing of products with optional filters. Stock is not
+        embedded in the product record; use the Stock endpoints to read
+        availability by branch.
+      parameters:
+        - in: query
+          name: q
+          required: false
+          schema:
+            type: string
+          description: Free-text search across name, sku and barcode.
+        - in: query
+          name: category
+          required: false
+          schema:
+            type: string
+          description: Filter by product category.
+        - in: query
+          name: isActive
+          required: false
+          schema:
+            type: boolean
+          description: Filter by active status.
+        - in: query
+          name: lowStockOnly
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: |
+            If true, only include products that have at least one branch
+            where `availableQuantity` is at or below `minStock`.
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number, starting at 1.
+        - in: query
+          name: pageSize
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of items per page.
+      responses:
+        '200':
+          description: Paginated list of products.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Product'
+        '400':
+          description: Invalid query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to list products.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags:
+        - Products
+      summary: Create product
+      description: |
+        Creates a product in the catalog. Covers manual registration as
+        well as confirmed values from the external product lookup. Stock
+        is not set through this endpoint; register an `incoming` inventory
+        movement to set the initial balance.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductCreateRequest'
+      responses:
+        '201':
+          description: Product created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to create products.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Duplicate sku or barcode.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: conflict
+                  message: A product with this sku already exists.
+                  details:
+                    - field: sku
+                      message: sku must be unique within the catalog.
+                  requestId: req_product_create_01
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /products/{productId}:
+    parameters:
+      - in: path
+        name: productId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the product.
+    get:
+      tags:
+        - Products
+      summary: Get product by id
+      responses:
+        '200':
+          description: Product detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to read this product.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Product not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      tags:
+        - Products
+      summary: Update product
+      description: |
+        Updates editable fields on a product. Only the fields included in
+        the request body are modified. Stock balances cannot be modified
+        through this endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductUpdateRequest'
+      responses:
+        '200':
+          description: Product updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to update this product.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Product not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Duplicate sku or barcode.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /products/{productId}/deactivate:
+    parameters:
+      - in: path
+        name: productId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the product.
+    patch:
+      tags:
+        - Products
+      summary: Deactivate product
+      description: |
+        Soft-deactivates a product. Existing stock and historical movements
+        remain visible, but an inactive product must not be used to
+        register new movements.
+      responses:
+        '204':
+          description: Product deactivated.
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to deactivate this product.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Product not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /stock:
+    get:
+      tags:
+        - Stock
+      summary: List stock balances
+      description: |
+        Read-only listing of stock balances. Stock is keyed by
+        `productId` and `branchId` and is not mutated through the Stock
+        endpoints; the only write path is `POST /inventory-movements`.
+      parameters:
+        - in: query
+          name: branchId
+          required: false
+          schema:
+            type: string
+          description: Filter by branch.
+        - in: query
+          name: productId
+          required: false
+          schema:
+            type: string
+          description: Filter by product.
+        - in: query
+          name: lowStockOnly
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: |
+            If true, only include stock records where `availableQuantity`
+            is at or below the associated product's `minStock`.
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number, starting at 1.
+        - in: query
+          name: pageSize
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of items per page.
+      responses:
+        '200':
+          description: Paginated list of stock records.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Stock'
+        '400':
+          description: Invalid query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to list stock.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /stock/lookup:
+    get:
+      tags:
+        - Stock
+      summary: Get stock by product and branch
+      description: |
+        Convenience lookup for the single stock record associated with a
+        given `productId` + `branchId` combination. Returns 404 when no
+        stock record exists for the combination.
+      parameters:
+        - in: query
+          name: productId
+          required: true
+          schema:
+            type: string
+          description: Identifier of the product.
+        - in: query
+          name: branchId
+          required: true
+          schema:
+            type: string
+          description: Identifier of the branch.
+      responses:
+        '200':
+          description: Stock record for the requested product and branch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stock'
+        '400':
+          description: Missing or invalid query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to read this stock record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No stock record exists for the given product and branch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /stock/{stockId}:
+    parameters:
+      - in: path
+        name: stockId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the stock record.
+    get:
+      tags:
+        - Stock
+      summary: Get stock by id
+      responses:
+        '200':
+          description: Stock detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stock'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to read this stock record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Stock record not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /inventory-movements:
+    get:
+      tags:
+        - InventoryMovements
+      summary: List inventory movements
+      description: |
+        Read-only listing of inventory movements, optionally filtered by
+        branch, product, type, user or date range.
+      parameters:
+        - in: query
+          name: branchId
+          required: false
+          schema:
+            type: string
+          description: Filter by branch.
+        - in: query
+          name: productId
+          required: false
+          schema:
+            type: string
+          description: Filter by product.
+        - in: query
+          name: type
+          required: false
+          schema:
+            $ref: '#/components/schemas/MovementType'
+          description: Filter by movement type.
+        - in: query
+          name: userId
+          required: false
+          schema:
+            type: string
+          description: Filter by user that registered the movement.
+        - in: query
+          name: from
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Inclusive lower bound for `createdAt`.
+        - in: query
+          name: to
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Inclusive upper bound for `createdAt`.
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number, starting at 1.
+        - in: query
+          name: pageSize
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of items per page.
+      responses:
+        '200':
+          description: Paginated list of inventory movements.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/InventoryMovement'
+        '400':
+          description: Invalid query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to list movements.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags:
+        - InventoryMovements
+      summary: Register an inventory movement
+      description: |
+        Write path for stock changes. The backend performs the following
+        steps atomically:
+
+        1. Loads the product and validates that it exists and is active.
+        2. Loads the branch and validates that it exists and is active.
+        3. Loads the matching stock record by `productId` + `branchId`.
+        4. For `outgoing` movements, validates that `quantity` does not
+           exceed the current `availableQuantity`.
+        5. Computes the new balance.
+        6. Updates the Stock record and creates the InventoryMovement
+           record in a single transaction, so callers never observe a
+           partial state.
+
+        Domain rule failures are reported with HTTP 422 and the standard
+        `ErrorResponse` shape using one of the codes `insufficient_stock`,
+        `inactive_product` or `inactive_branch`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InventoryMovementCreateRequest'
+            example:
+              productId: product_rice_001
+              branchId: branch_central
+              type: incoming
+              quantity: 40
+              reason: Initial import
+              notes: Carga inicial de inventario.
+      responses:
+        '201':
+          description: Movement registered and stock updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryMovement'
+              example:
+                id: movement_001
+                productId: product_rice_001
+                branchId: branch_central
+                userId: user_admin_001
+                type: incoming
+                quantity: 40
+                previousStock: 0
+                resultingStock: 40
+                reason: Initial import
+                notes: Carga inicial de inventario.
+                createdAt: '2026-06-02T20:15:00Z'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to register this movement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Product, branch or stock record not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: |
+            Domain rule failure. Possible `error.code` values:
+            `insufficient_stock`, `inactive_product`, `inactive_branch`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: insufficient_stock
+                  message: The requested quantity exceeds the available stock.
+                  details:
+                    - field: quantity
+                      message: Requested 10 but only 4 available at the selected branch.
+                  requestId: req_movement_insufficient_01
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /inventory-movements/{movementId}:
+    parameters:
+      - in: path
+        name: movementId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the inventory movement.
+    get:
+      tags:
+        - InventoryMovements
+      summary: Get inventory movement by id
+      responses:
+        '200':
+          description: Inventory movement detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryMovement'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to read this movement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Inventory movement not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /product-lookup/{barcode}:
+    parameters:
+      - in: path
+        name: barcode
+        required: true
+        schema:
+          type: string
+        description: Barcode of the product to look up.
+    get:
+      tags:
+        - ProductLookup
+      summary: Look up product suggestion by barcode
+      description: |
+        Returns suggested product data for the given barcode. The backend
+        may proxy Open Food Facts or any other external provider, so the
+        upstream source is abstracted behind a single contract.
+
+        This endpoint does not create or persist a Product. The user must
+        review and confirm the suggested fields before creating the
+        product through `POST /products`.
+      responses:
+        '200':
+          description: Suggestion found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalProductSuggestion'
+              example:
+                barcode: '3017624010701'
+                name: Nutella
+                brand: Ferrero
+                category: Spreads
+                imageUrl: https://images.openfoodfacts.org/images/products/301/762/401/0701/front_en.400.jpg
+                source: open_food_facts
+        '400':
+          description: Invalid barcode.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No suggestion found for the requested barcode.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: product_not_found
+                  message: No suggestion was found for the requested barcode.
+                  details:
+                    - field: barcode
+                      message: Barcode not present in the upstream catalog.
+                  requestId: req_product_lookup_01
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Upstream provider unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: service_unavailable
+                  message: The upstream product provider is currently unavailable.
+                  requestId: req_product_lookup_02
+
+  /notification-tokens:
+    post:
+      tags:
+        - NotificationTokens
+      summary: Register or upsert a device token
+      description: |
+        Registers a push notification token for the authenticated user. If
+        the device already has a token recorded, the existing record is
+        upserted so the same device does not accumulate duplicates.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationTokenCreateRequest'
+            example:
+              token: fcm_device_token_admin_demo
+              platform: android
+      responses:
+        '201':
+          description: Token registered or updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationToken'
+              example:
+                id: token_001
+                userId: user_admin_001
+                token: fcm_device_token_admin_demo
+                platform: android
+                createdAt: '2026-06-02T20:00:00Z'
+                updatedAt: '2026-06-02T20:00:00Z'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /notification-tokens/{tokenId}:
+    parameters:
+      - in: path
+        name: tokenId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the notification token.
+    delete:
+      tags:
+        - NotificationTokens
+      summary: Remove a device token
+      description: |
+        Removes a push notification token. Used on logout or when the
+        client detects that the token has been invalidated by the platform.
+      responses:
+        '204':
+          description: Token removed.
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to remove this token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Token not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /import-batches:
+    get:
+      tags:
+        - ImportBatches
+      summary: List import batches
+      description: |
+        Read-only listing of previous product import batches.
+      parameters:
+        - in: query
+          name: status
+          required: false
+          schema:
+            $ref: '#/components/schemas/ImportStatus'
+          description: Filter by lifecycle status.
+        - in: query
+          name: importedBy
+          required: false
+          schema:
+            type: string
+          description: Filter by the user that started the batch.
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number, starting at 1.
+        - in: query
+          name: pageSize
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of items per page.
+      responses:
+        '200':
+          description: Paginated list of import batches.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ImportBatch'
+        '400':
+          description: Invalid query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to list import batches.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags:
+        - ImportBatches
+      summary: Create an import batch
+      description: |
+        Creates a validation batch from parsed product import metadata.
+        Import is a complementary path for bulk-loading products; the
+        primary, always-available product creation path is the manual flow
+        through `POST /products`.
+
+        The actual CSV body is expected to be uploaded through a separate
+        multipart endpoint or signed-URL flow, which is out of scope for
+        this version of the contract. This payload carries the batch
+        metadata only; validation of the parsed rows is performed
+        server-side and surfaced through subsequent reads of the batch.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportBatchCreateRequest'
+            example:
+              fileName: inventory_initial.csv
+      responses:
+        '201':
+          description: Batch created. Rows are queued for validation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportBatch'
+              example:
+                id: import_001
+                fileName: inventory_initial.csv
+                importedBy: user_admin_001
+                status: pending
+                totalRows: 0
+                validRows: 0
+                invalidRows: 0
+                createdAt: '2026-06-02T20:00:00Z'
+                completedAt: null
+        '400':
+          description: Validation error on the request payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to create import batches.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /import-batches/{importBatchId}:
+    parameters:
+      - in: path
+        name: importBatchId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the import batch.
+    get:
+      tags:
+        - ImportBatches
+      summary: Get import batch detail
+      description: |
+        Returns the import batch including row counts and per-row
+        validation errors detected so far.
+      responses:
+        '200':
+          description: Import batch detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportBatch'
+              example:
+                id: import_002
+                fileName: inventory_with_errors.csv
+                importedBy: user_admin_001
+                status: failed
+                totalRows: 4
+                validRows: 0
+                invalidRows: 4
+                errors:
+                  - row: 1
+                    field: name
+                    message: El nombre es obligatorio
+                  - row: 2
+                    field: sku
+                    message: El SKU es obligatorio
+                  - row: 3
+                    field: initialStock
+                    message: El stock inicial no puede ser negativo
+                  - row: 4
+                    field: branchName
+                    message: La sucursal no existe
+                createdAt: '2026-06-02T20:10:00Z'
+                completedAt: '2026-06-02T20:12:00Z'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to read this import batch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Import batch not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /import-batches/{importBatchId}/confirm:
+    parameters:
+      - in: path
+        name: importBatchId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the import batch to confirm.
+    post:
+      tags:
+        - ImportBatches
+      summary: Confirm a validated import batch
+      description: |
+        Commits the validated rows of an import batch. If the batch has
+        invalid rows or is otherwise not in a confirmable state, the
+        request is rejected with HTTP 422 and the standard `ErrorResponse`
+        shape. If a confirmable batch contains rows with duplicate `sku`
+        or `barcode` against the current catalog, the request fails with
+        HTTP 409.
+
+        On success, the backend creates the products and may create
+        `incoming` inventory movements with reason `Initial import` to
+        seed the initial stock balances.
+      responses:
+        '200':
+          description: Import confirmed. Returns the updated batch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportBatch'
+              example:
+                id: import_001
+                fileName: inventory_initial.csv
+                importedBy: user_admin_001
+                status: completed
+                totalRows: 4
+                validRows: 4
+                invalidRows: 0
+                createdAt: '2026-06-02T20:00:00Z'
+                completedAt: '2026-06-02T20:05:00Z'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to confirm this import batch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Import batch not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Duplicate sku or barcode during confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: |
+            The batch cannot be confirmed because it contains invalid rows
+            or is in a state that does not allow confirmation. Possible
+            `error.code` values include `invalid_rows` and
+            `batch_not_confirmable`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: invalid_rows
+                  message: The batch contains invalid rows and cannot be confirmed.
+                  details:
+                    - field: row.1.name
+                      message: El nombre es obligatorio
+                    - field: row.3.initialStock
+                      message: El stock inicial no puede ser negativo
+                  requestId: req_import_confirm_01
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /products/{productId}/image-upload-url:
+    parameters:
+      - in: path
+        name: productId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the product whose image is being uploaded.
+    post:
+      tags:
+        - Products
+      summary: Request a signed URL to upload a product image
+      description: |
+        Returns short-lived instructions for the client to upload a
+        product image directly to object storage. The backend never
+        proxies the image bytes.
+
+        Implementation notes:
+
+        - Object-storage backends (S3, GCS, Azure Blob, Cloudflare R2)
+          should return a presigned `PUT` or `POST` URL with the required
+          headers.
+        - Firebase Storage implementations can adapt this flow by mapping
+          the response to a Firebase Storage upload task; the client uses
+          the Firebase Storage SDK to perform the actual upload while the
+          contract surface remains the same.
+
+        After the storage upload succeeds, the client calls
+        `POST /products/{productId}/image-upload-complete` so the backend
+        can persist `publicUrl` on the product. `Product.imageUrl` remains
+        the canonical persisted image reference.
+
+        External-product lookup suggestions already carry a hosted
+        `imageUrl`. Those values do not need to be re-uploaded unless the
+        application explicitly chooses to host its own copy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductImageUploadRequest'
+            example:
+              contentType: image/jpeg
+              fileSize: 184320
+              originalFileName: arroz-1kg.jpg
+      responses:
+        '200':
+          description: Upload instructions issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductImageUploadInstructions'
+              example:
+                uploadId: upl_product_rice_001_01
+                uploadUrl: https://storage.example.com/uploads/product_rice_001/1717358400-abc.jpg?signature=...
+                method: PUT
+                headers:
+                  Content-Type: image/jpeg
+                expiresAt: '2026-06-02T20:15:00Z'
+                publicUrl: https://cdn.example.com/product-images/product_rice_001/1717358400-abc.jpg
+        '400':
+          description: Validation error on the upload request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to upload images for this product.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Product not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Requested file size exceeds the backend upload policy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '415':
+          description: Requested content type is not supported.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: |
+            The upload cannot proceed because the product is inactive or
+            the upload policy rejects the request. Possible `error.code`
+            values include `inactive_product` and `invalid_upload_policy`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /products/{productId}/image-upload-complete:
+    parameters:
+      - in: path
+        name: productId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the product whose image upload is being completed.
+    post:
+      tags:
+        - Products
+      summary: Confirm a product image upload and persist imageUrl
+      description: |
+        Confirms that the client finished uploading bytes through the
+        signed URL issued by `POST /products/{productId}/image-upload-url`.
+        On success, the backend persists the corresponding `publicUrl`
+        into `Product.imageUrl` and returns the updated `Product`.
+
+        If the upload session has expired before this call is made, the
+        request is rejected with HTTP 410 and the client must request a
+        new upload URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductImageUploadCompleteRequest'
+            example:
+              uploadId: upl_product_rice_001_01
+      responses:
+        '200':
+          description: Upload confirmed. Returns the updated product.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+              example:
+                id: product_rice_001
+                name: Arroz 80% 1kg
+                sku: ARR-001
+                barcode: '7441000000012'
+                category: Abarrotes
+                description: Bolsa de arroz 80% de 1 kilogramo.
+                imageUrl: https://cdn.example.com/product-images/product_rice_001/1717358400-abc.jpg
+                minStock: 10
+                isActive: true
+                createdAt: '2026-06-02T20:00:00Z'
+                updatedAt: '2026-06-02T20:15:00Z'
+        '400':
+          description: Validation error on the completion request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to confirm uploads for this product.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Product or upload session not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '410':
+          description: Upload session has expired and can no longer be confirmed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: upload_session_expired
+                  message: The upload session has expired. Request a new upload URL and retry.
+                  requestId: req_image_upload_complete_01
+        '422':
+          description: |
+            The upload has not finished or is in an unconfirmable state.
+            Possible `error.code` values include `upload_not_completed`
+            and `invalid_upload_state`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+
+    UserRole:
+      type: string
+      enum:
+        - admin
+        - collaborator
+      description: Role of an authenticated user.
+
+    MovementType:
+      type: string
+      enum:
+        - incoming
+        - outgoing
+        - adjustment
+      description: |
+        Type of an inventory movement. Only `incoming` and `outgoing` are
+        required for the MVP. `adjustment` is optional and may be supported
+        in later iterations.
+
+    ImportStatus:
+      type: string
+      enum:
+        - pending
+        - validated
+        - completed
+        - failed
+      description: Lifecycle status of a product import batch.
+
+    PlatformType:
+      type: string
+      enum:
+        - android
+        - ios
+        - web
+        - unknown
+      description: Device platform reported for a push notification token.
+
+    User:
+      type: object
+      required:
+        - id
+        - name
+        - email
+        - role
+        - isActive
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: user_admin_001
+        name:
+          type: string
+          example: María Rodríguez
+        email:
+          type: string
+          format: email
+          example: admin@inventario-demo.com
+        role:
+          $ref: '#/components/schemas/UserRole'
+        branchIds:
+          type: array
+          items:
+            type: string
+          example:
+            - branch_central
+            - branch_north
+        isActive:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-06-02T20:00:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-06-02T20:00:00Z'
+
+    Branch:
+      type: object
+      required:
+        - id
+        - name
+        - isActive
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: branch_central
+        name:
+          type: string
+          example: Sucursal Central
+        address:
+          type: string
+          example: Centro de la ciudad
+        isActive:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-06-02T20:00:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-06-02T20:00:00Z'
+
+    Product:
+      type: object
+      description: |
+        Product in the catalog. Stock is not embedded in the product record.
+        Available quantity is represented by the Stock schema, scoped by
+        productId and branchId.
+      required:
+        - id
+        - name
+        - sku
+        - category
+        - minStock
+        - isActive
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: product_rice_001
+        name:
+          type: string
+          example: Arroz 80% 1kg
+        sku:
+          type: string
+          example: ARR-001
+        barcode:
+          type: string
+          nullable: true
+          example: '7441000000012'
+        category:
+          type: string
+          example: Abarrotes
+        description:
+          type: string
+          example: Bolsa de arroz 80% de 1 kilogramo.
+        imageUrl:
+          type: string
+          format: uri
+          nullable: true
+          example: https://example.com/images/arroz-1kg.jpg
+        minStock:
+          type: integer
+          minimum: 0
+          example: 10
+        isActive:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-06-02T20:00:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-06-02T20:00:00Z'
+
+    Stock:
+      type: object
+      description: |
+        Available quantity of a product in a specific branch. A single Stock
+        record exists per `productId` and `branchId` combination.
+      required:
+        - id
+        - productId
+        - branchId
+        - availableQuantity
+        - updatedAt
+      properties:
+        id:
+          type: string
+          example: product_rice_001_branch_central
+        productId:
+          type: string
+          example: product_rice_001
+        branchId:
+          type: string
+          example: branch_central
+        availableQuantity:
+          type: integer
+          minimum: 0
+          example: 40
+        lastMovementId:
+          type: string
+          nullable: true
+          example: movement_001
+        lastMovementAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-06-02T20:15:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-06-02T20:15:00Z'
+
+    InventoryMovement:
+      type: object
+      description: |
+        Inventory movement record. Stock balances change only through
+        movements. `previousStock` and `resultingStock` capture the balance
+        before and after the movement was applied.
+      required:
+        - id
+        - productId
+        - branchId
+        - userId
+        - type
+        - quantity
+        - previousStock
+        - resultingStock
+        - reason
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: movement_001
+        productId:
+          type: string
+          example: product_rice_001
+        branchId:
+          type: string
+          example: branch_central
+        userId:
+          type: string
+          example: user_admin_001
+        type:
+          $ref: '#/components/schemas/MovementType'
+        quantity:
+          type: integer
+          minimum: 1
+          example: 40
+        previousStock:
+          type: integer
+          minimum: 0
+          example: 0
+        resultingStock:
+          type: integer
+          minimum: 0
+          example: 40
+        reason:
+          type: string
+          example: Initial import
+        notes:
+          type: string
+          example: Carga inicial de inventario.
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-06-02T20:15:00Z'
+
+    NotificationToken:
+      type: object
+      required:
+        - id
+        - userId
+        - token
+        - platform
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: token_001
+        userId:
+          type: string
+          example: user_admin_001
+        token:
+          type: string
+          example: fcm_device_token_admin_demo
+        platform:
+          $ref: '#/components/schemas/PlatformType'
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-06-02T20:00:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-06-02T20:00:00Z'
+
+    ImportBatchError:
+      type: object
+      required:
+        - row
+        - field
+        - message
+      properties:
+        row:
+          type: integer
+          minimum: 1
+          example: 8
+        field:
+          type: string
+          example: initialStock
+        message:
+          type: string
+          example: Stock inicial no puede ser negativo.
+
+    ImportBatch:
+      type: object
+      description: |
+        Optional record of a CSV product import. Persisted only when the
+        product team decides to keep import history.
+      required:
+        - id
+        - fileName
+        - importedBy
+        - status
+        - totalRows
+        - validRows
+        - invalidRows
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: import_001
+        fileName:
+          type: string
+          example: inventory_initial.csv
+        importedBy:
+          type: string
+          example: user_admin_001
+        status:
+          $ref: '#/components/schemas/ImportStatus'
+        totalRows:
+          type: integer
+          minimum: 0
+          example: 4
+        validRows:
+          type: integer
+          minimum: 0
+          example: 4
+        invalidRows:
+          type: integer
+          minimum: 0
+          example: 0
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportBatchError'
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-06-02T20:00:00Z'
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-06-02T20:05:00Z'
+
+    ExternalProductSuggestion:
+      type: object
+      description: |
+        Suggested product data returned by the external lookup endpoint.
+        The user must review and confirm these values before persisting them
+        as a Product.
+      required:
+        - barcode
+        - source
+      properties:
+        barcode:
+          type: string
+          example: '3017624010701'
+        name:
+          type: string
+          nullable: true
+          example: Nutella
+        brand:
+          type: string
+          nullable: true
+          example: Ferrero
+        category:
+          type: string
+          nullable: true
+          example: Spreads
+        imageUrl:
+          type: string
+          format: uri
+          nullable: true
+          example: https://images.openfoodfacts.org/images/products/301/762/401/0701/front_en.400.jpg
+        source:
+          type: string
+          example: open_food_facts
+
+    AuthRegisterRequest:
+      type: object
+      required:
+        - name
+        - email
+        - password
+      properties:
+        name:
+          type: string
+          example: Ana Gómez
+        email:
+          type: string
+          format: email
+          example: ana@example.com
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: a-strong-password
+        role:
+          $ref: '#/components/schemas/UserRole'
+        branchIds:
+          type: array
+          items:
+            type: string
+
+    AuthLoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: ana@example.com
+        password:
+          type: string
+          format: password
+          example: a-strong-password
+
+    AuthLoginResponse:
+      type: object
+      required:
+        - accessToken
+        - tokenType
+        - expiresIn
+        - user
+      properties:
+        accessToken:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature
+        tokenType:
+          type: string
+          example: Bearer
+        expiresIn:
+          type: integer
+          description: Access token lifetime in seconds.
+          example: 3600
+        user:
+          $ref: '#/components/schemas/User'
+
+    UserCreateRequest:
+      type: object
+      required:
+        - name
+        - email
+        - role
+      properties:
+        name:
+          type: string
+          example: Carlos Pérez
+        email:
+          type: string
+          format: email
+          example: colaborador@inventario-demo.com
+        role:
+          $ref: '#/components/schemas/UserRole'
+        branchIds:
+          type: array
+          items:
+            type: string
+        isActive:
+          type: boolean
+          default: true
+
+    UserUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+        branchIds:
+          type: array
+          items:
+            type: string
+        isActive:
+          type: boolean
+
+    BranchCreateRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          example: Sucursal Norte
+        address:
+          type: string
+          example: Zona norte
+        isActive:
+          type: boolean
+          default: true
+
+    BranchUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        address:
+          type: string
+        isActive:
+          type: boolean
+
+    ProductCreateRequest:
+      type: object
+      required:
+        - name
+        - sku
+        - category
+        - minStock
+      properties:
+        name:
+          type: string
+          example: Frijoles negros 900g
+        sku:
+          type: string
+          example: FRJ-001
+        barcode:
+          type: string
+          nullable: true
+          example: '7441000000029'
+        category:
+          type: string
+          example: Abarrotes
+        description:
+          type: string
+          example: Bolsa de frijoles negros de 900 gramos.
+        imageUrl:
+          type: string
+          format: uri
+          nullable: true
+          example: https://example.com/images/frijoles-negros.jpg
+        minStock:
+          type: integer
+          minimum: 0
+          example: 8
+        isActive:
+          type: boolean
+          default: true
+
+    ProductUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        sku:
+          type: string
+        barcode:
+          type: string
+          nullable: true
+        category:
+          type: string
+        description:
+          type: string
+        imageUrl:
+          type: string
+          format: uri
+          nullable: true
+        minStock:
+          type: integer
+          minimum: 0
+        isActive:
+          type: boolean
+
+    InventoryMovementCreateRequest:
+      type: object
+      description: |
+        Request to register an inventory movement. The server validates the
+        affected stock balance, rejects outgoing movements that exceed
+        `availableQuantity`, and atomically updates both the Stock record
+        and the InventoryMovement record.
+      required:
+        - productId
+        - branchId
+        - type
+        - quantity
+        - reason
+      properties:
+        productId:
+          type: string
+          example: product_rice_001
+        branchId:
+          type: string
+          example: branch_central
+        type:
+          $ref: '#/components/schemas/MovementType'
+        quantity:
+          type: integer
+          minimum: 1
+          example: 40
+        reason:
+          type: string
+          example: Initial import
+        notes:
+          type: string
+          example: Carga inicial de inventario.
+
+    NotificationTokenCreateRequest:
+      type: object
+      required:
+        - token
+        - platform
+      properties:
+        token:
+          type: string
+          example: fcm_device_token_admin_demo
+        platform:
+          $ref: '#/components/schemas/PlatformType'
+
+    ImportBatchCreateRequest:
+      type: object
+      description: |
+        Request to start a product import batch. The actual CSV content is
+        expected to be uploaded through a separate multipart endpoint or a
+        signed-URL flow; this payload carries the batch metadata.
+      required:
+        - fileName
+      properties:
+        fileName:
+          type: string
+          example: inventory_initial.csv
+
+    FieldError:
+      type: object
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+          example: name
+        message:
+          type: string
+          example: Name is required.
+
+    ErrorBody:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code.
+          example: validation_error
+        message:
+          type: string
+          description: Human-readable error message.
+          example: The request contains invalid fields.
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldError'
+        requestId:
+          type: string
+          example: req_123
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+      example:
+        error:
+          code: validation_error
+          message: The request contains invalid fields.
+          details:
+            - field: name
+              message: Name is required.
+          requestId: req_123
+
+    PaginatedResponse:
+      type: object
+      description: |
+        Generic envelope for paginated list responses. Endpoints that return
+        a paginated list extend this schema by overriding `items` with the
+        concrete element type.
+      required:
+        - items
+        - total
+        - page
+        - pageSize
+        - hasNextPage
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+        total:
+          type: integer
+          minimum: 0
+          example: 25
+        page:
+          type: integer
+          minimum: 1
+          example: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          example: 20
+        hasNextPage:
+          type: boolean
+          example: true
+
+    ProductImageUploadRequest:
+      type: object
+      description: |
+        Request payload used to ask the backend for upload instructions
+        for a product image. The backend mints a short-lived signed URL
+        that the client uses to upload bytes directly to object storage.
+      required:
+        - contentType
+      properties:
+        contentType:
+          type: string
+          enum:
+            - image/jpeg
+            - image/png
+            - image/webp
+          example: image/jpeg
+        fileSize:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Optional client-reported size of the file in bytes.
+          example: 184320
+        originalFileName:
+          type: string
+          description: Optional original file name, useful for backend logging.
+          example: arroz-1kg.jpg
+
+    ProductImageUploadInstructions:
+      type: object
+      description: |
+        Instructions returned by the backend so that the client can upload
+        the image bytes directly to object storage. The `uploadUrl` is
+        short-lived; the client must complete the upload and call
+        `POST /products/{productId}/image-upload-complete` before
+        `expiresAt`. `publicUrl` is the URL that will be persisted into
+        `Product.imageUrl` once the upload is confirmed.
+      required:
+        - uploadId
+        - uploadUrl
+        - method
+        - headers
+        - expiresAt
+        - publicUrl
+      properties:
+        uploadId:
+          type: string
+          example: upl_product_rice_001_01
+        uploadUrl:
+          type: string
+          format: uri
+          example: https://storage.example.com/uploads/product_rice_001/1717358400-abc.jpg?signature=...
+        method:
+          type: string
+          enum:
+            - PUT
+            - POST
+          example: PUT
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Headers that the client must include in the upload request,
+            typically at least `Content-Type` matching the requested type.
+          example:
+            Content-Type: image/jpeg
+        expiresAt:
+          type: string
+          format: date-time
+          example: '2026-06-02T20:15:00Z'
+        publicUrl:
+          type: string
+          format: uri
+          example: https://cdn.example.com/product-images/product_rice_001/1717358400-abc.jpg
+
+    ProductImageUploadCompleteRequest:
+      type: object
+      description: |
+        Request payload sent to confirm that an image upload finished and
+        the backend should persist the corresponding `publicUrl` onto the
+        product.
+      required:
+        - uploadId
+      properties:
+        uploadId:
+          type: string
+          example: upl_product_rice_001_01

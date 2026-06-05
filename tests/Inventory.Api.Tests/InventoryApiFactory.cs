@@ -2,26 +2,32 @@ using Inventory.Api.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Inventory.Api.Tests;
 
 public class InventoryApiFactory : WebApplicationFactory<Program>
 {
-    private readonly string _databaseName = $"InventoryApiTests-{Guid.NewGuid()}";
+    private readonly string _databaseName = $"inventory-tests-{Guid.NewGuid():N}";
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+
         builder.ConfigureAppConfiguration((_, config) =>
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DefaultConnection"] =
-                    "Server=test;Database=InventoryDbTest;User Id=sa;Password=unused;Encrypt=False;TrustServerCertificate=True;"
+                    "Server=test;Database=InventoryDbTest;User Id=sa;Password=unused;Encrypt=False;TrustServerCertificate=True;",
+                ["Jwt:SecretKey"] =
+                    "test-only-secret-key-must-be-at-least-32-bytes-long-xxxxxxxxxxxx",
+                ["Jwt:Issuer"] = "inventory-api-tests",
+                ["Jwt:Audience"] = "inventory-mobile-tests",
+                ["Jwt:ExpiresInMinutes"] = "60"
             });
         });
 
@@ -29,6 +35,8 @@ public class InventoryApiFactory : WebApplicationFactory<Program>
         {
             services.RemoveAll<InventoryDbContext>();
             services.RemoveAll<DbContextOptions<InventoryDbContext>>();
+            services.RemoveAll<DbContextOptions>();
+
             RemoveDbContextOptionsConfigurations(services);
 
             services.AddDbContext<InventoryDbContext>(options =>
@@ -45,10 +53,14 @@ public class InventoryApiFactory : WebApplicationFactory<Program>
         await dbContext.Database.EnsureCreatedAsync();
     }
 
-    private static void RemoveDbContextOptionsConfigurations(IServiceCollection services)
+    private static void RemoveDbContextOptionsConfigurations(
+        IServiceCollection services)
     {
         var descriptors = services
-            .Where(service => service.ServiceType.FullName?.Contains("IDbContextOptionsConfiguration", StringComparison.Ordinal) == true)
+            .Where(service =>
+                service.ServiceType.FullName?.Contains(
+                    "IDbContextOptionsConfiguration",
+                    StringComparison.Ordinal) == true)
             .ToArray();
 
         foreach (var descriptor in descriptors)
