@@ -16,6 +16,7 @@ using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
+const string DevelopmentCorsPolicy = "DevelopmentCorsPolicy";
 
 builder.Services
     .AddControllers()
@@ -59,6 +60,28 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 builder.Services.AddOpenApi();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy(DevelopmentCorsPolicy, policy =>
+        {
+            policy
+                .SetIsOriginAllowed(origin =>
+                {
+                    if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+                    {
+                        return false;
+                    }
+
+                    return uri.Host is "localhost" or "127.0.0.1";
+                })
+                .AllowAnyHeader()
+                .AllowAnyMethod();
+        });
+    });
+}
 
 builder.Services.AddDbContext<InventoryDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -163,6 +186,11 @@ app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(webRootPath)
 });
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseCors(DevelopmentCorsPolicy);
+}
 
 app.UseAuthentication();
 app.UseAuthorization();
