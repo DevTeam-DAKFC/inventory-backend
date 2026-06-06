@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Inventory.Api.Auth;
 using Inventory.Api.Common.Errors;
 using Inventory.Api.Data;
+using Inventory.Api.Imports;
 using Inventory.Api.InventoryMovements;
 using Inventory.Api.Products;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -81,6 +82,7 @@ builder.Services.AddScoped<IAuthRegistrationService, AuthRegistrationService>();
 builder.Services.AddScoped<IAuthLoginService, AuthLoginService>();
 builder.Services.AddScoped<IAuthCurrentUserService, AuthCurrentUserService>();
 builder.Services.AddScoped<IInventoryMovementService, InventoryMovementService>();
+builder.Services.AddScoped<IProductCsvImportService, ProductCsvImportService>();
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
