@@ -58,7 +58,7 @@ public class AuthRegistrationService : IAuthRegistrationService
             Name = name.Trim(),
             Email = normalizedEmail,
             PasswordHash = _passwordHasher.Hash(password),
-            Role = UserRole.Collaborator,
+            Role = UserRole.Admin,
             IsActive = true,
             CreatedAt = _timeProvider.GetUtcNow().UtcDateTime
         };
