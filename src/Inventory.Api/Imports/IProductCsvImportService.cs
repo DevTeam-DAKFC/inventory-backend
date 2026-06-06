@@ -8,7 +8,7 @@ public interface IProductCsvImportService
 {
     Task<ImportProductsResult> ImportProductsAsync(
         Guid importedBy,
-        IFormFile file,
+        IFormFile? file,
         CancellationToken cancellationToken);
 
     Task<ListImportBatchesResult> ListBatchesAsync(

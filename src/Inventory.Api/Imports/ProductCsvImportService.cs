@@ -25,7 +25,7 @@ public class ProductCsvImportService : IProductCsvImportService
 
     public async Task<ImportProductsResult> ImportProductsAsync(
         Guid importedBy,
-        IFormFile file,
+        IFormFile? file,
         CancellationToken cancellationToken)
     {
         var fileValidation = ValidateFile(file);
@@ -34,7 +34,7 @@ public class ProductCsvImportService : IProductCsvImportService
             return new ImportProductsResult.ValidationFailed(fileValidation);
         }
 
-        await using var stream = file.OpenReadStream();
+        await using var stream = file!.OpenReadStream();
         using var reader = new StreamReader(stream);
         var rows = await ReadRowsAsync(reader, cancellationToken);
         var now = _timeProvider.GetUtcNow().UtcDateTime;
