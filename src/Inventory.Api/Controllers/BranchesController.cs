@@ -163,6 +163,11 @@ public class BranchesController : ControllerBase
             return NotFoundError("Branch not found.");
         }
 
+        if (branch.IsActive)
+        {
+            return Ok(ToResponse(branch));
+        }
+
         branch.IsActive = true;
         branch.UpdatedAt = DateTime.UtcNow;
 

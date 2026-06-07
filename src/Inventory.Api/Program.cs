@@ -140,6 +140,18 @@ builder.Services
                     challengeContext.Response,
                     challengeContext.HttpContext.TraceIdentifier,
                     challengeContext.HttpContext.RequestAborted);
+            },
+            OnForbidden = async forbiddenContext =>
+            {
+                if (forbiddenContext.Response.HasStarted)
+                {
+                    return;
+                }
+
+                await AuthChallengeResponseWriter.WriteForbiddenAsync(
+                    forbiddenContext.Response,
+                    forbiddenContext.HttpContext.TraceIdentifier,
+                    forbiddenContext.HttpContext.RequestAborted);
             }
         };
     });

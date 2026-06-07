@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Inventory.Api.Contracts.Products;
 using Inventory.Api.Data;
+using Inventory.Api.Models;
 using Inventory.Api.ProductLookup;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -103,7 +104,22 @@ public class ProductLookupEndpointTests : IClassFixture<InventoryApiFactory>
         Assert.Equal(0, await dbContext.Products.CountAsync());
     }
 
-    private HttpClient CreateClient(ExternalProductLookupResult result)
+    [Fact]
+    public async Task Lookup_Product_Returns_401_Without_Authentication()
+    {
+        using var client = CreateClient(
+            new ExternalProductLookupResult.ProviderUnavailable(),
+            authenticated: false);
+
+        var response = await client.GetAsync("/product-lookup/3017624010701");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        await AssertErrorResponseAsync(response, "unauthorized");
+    }
+
+    private HttpClient CreateClient(
+        ExternalProductLookupResult result,
+        bool authenticated = true)
     {
         var factory = _factory.WithWebHostBuilder(builder =>
         {
@@ -114,7 +130,14 @@ public class ProductLookupEndpointTests : IClassFixture<InventoryApiFactory>
             });
         });
 
-        return factory.CreateClient();
+        var client = factory.CreateClient();
+        if (authenticated)
+        {
+            client.DefaultRequestHeaders.Add("X-Test-User-Id", Guid.NewGuid().ToString());
+            client.DefaultRequestHeaders.Add("X-Test-User-Role", UserRole.Collaborator.ToString());
+        }
+
+        return client;
     }
 
     private static async Task AssertErrorResponseAsync(

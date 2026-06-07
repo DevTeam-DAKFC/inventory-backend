@@ -1,11 +1,13 @@
 using Inventory.Api.Common.Errors;
 using Inventory.Api.Contracts.Products;
 using Inventory.Api.ProductLookup;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Inventory.Api.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("product-lookup")]
 [Produces("application/json")]
 public class ProductLookupController : ControllerBase

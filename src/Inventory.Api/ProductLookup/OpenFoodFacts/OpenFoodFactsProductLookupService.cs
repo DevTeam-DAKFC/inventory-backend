@@ -36,66 +36,69 @@ public class OpenFoodFactsProductLookupService : IExternalProductLookupService
             return new ExternalProductLookupResult.ProviderUnavailable();
         }
 
-        if (response.StatusCode == HttpStatusCode.NotFound)
+        using (response)
         {
-            return new ExternalProductLookupResult.NotFound();
-        }
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return new ExternalProductLookupResult.NotFound();
+            }
 
-        if (!response.IsSuccessStatusCode)
-        {
-            return new ExternalProductLookupResult.ProviderUnavailable();
-        }
+            if (!response.IsSuccessStatusCode)
+            {
+                return new ExternalProductLookupResult.ProviderUnavailable();
+            }
 
-        OpenFoodFactsProductResponse? providerResponse;
-        try
-        {
-            providerResponse = await response.Content.ReadFromJsonAsync<OpenFoodFactsProductResponse>(
-                cancellationToken);
-        }
-        catch (InvalidOperationException)
-        {
-            return new ExternalProductLookupResult.ProviderUnavailable();
-        }
-        catch (HttpRequestException)
-        {
-            return new ExternalProductLookupResult.ProviderUnavailable();
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            return new ExternalProductLookupResult.ProviderUnavailable();
-        }
+            OpenFoodFactsProductResponse? providerResponse;
+            try
+            {
+                providerResponse = await response.Content.ReadFromJsonAsync<OpenFoodFactsProductResponse>(
+                    cancellationToken);
+            }
+            catch (InvalidOperationException)
+            {
+                return new ExternalProductLookupResult.ProviderUnavailable();
+            }
+            catch (HttpRequestException)
+            {
+                return new ExternalProductLookupResult.ProviderUnavailable();
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return new ExternalProductLookupResult.ProviderUnavailable();
+            }
 
-        if (providerResponse is null)
-        {
-            return new ExternalProductLookupResult.ProviderUnavailable();
+            if (providerResponse is null)
+            {
+                return new ExternalProductLookupResult.ProviderUnavailable();
+            }
+
+            if (providerResponse.Status == 0)
+            {
+                return new ExternalProductLookupResult.NotFound();
+            }
+
+            if (providerResponse.Status != 1 || providerResponse.Product is null)
+            {
+                return new ExternalProductLookupResult.ProviderUnavailable();
+            }
+
+            var imageUrl = TrimToNull(providerResponse.Product.ImageFrontUrl)
+                ?? TrimToNull(providerResponse.Product.ImageUrl);
+
+            if (imageUrl is not null &&
+                !Uri.TryCreate(imageUrl, UriKind.Absolute, out _))
+            {
+                imageUrl = null;
+            }
+
+            return new ExternalProductLookupResult.Success(new ExternalProductSuggestion(
+                barcode,
+                TrimToNull(providerResponse.Product.ProductName),
+                TrimToNull(providerResponse.Product.Brands),
+                TrimToNull(providerResponse.Product.Categories),
+                imageUrl,
+                SourceName));
         }
-
-        if (providerResponse.Status == 0)
-        {
-            return new ExternalProductLookupResult.NotFound();
-        }
-
-        if (providerResponse.Status != 1 || providerResponse.Product is null)
-        {
-            return new ExternalProductLookupResult.ProviderUnavailable();
-        }
-
-        var imageUrl = TrimToNull(providerResponse.Product.ImageFrontUrl)
-            ?? TrimToNull(providerResponse.Product.ImageUrl);
-
-        if (imageUrl is not null &&
-            !Uri.TryCreate(imageUrl, UriKind.Absolute, out _))
-        {
-            imageUrl = null;
-        }
-
-        return new ExternalProductLookupResult.Success(new ExternalProductSuggestion(
-            barcode,
-            TrimToNull(providerResponse.Product.ProductName),
-            TrimToNull(providerResponse.Product.Brands),
-            TrimToNull(providerResponse.Product.Categories),
-            imageUrl,
-            SourceName));
     }
 
     private static string? TrimToNull(string? value)
