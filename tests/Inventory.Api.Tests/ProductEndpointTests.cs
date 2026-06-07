@@ -731,6 +731,64 @@ public class ProductEndpointTests : IClassFixture<InventoryApiFactory>, IAsyncLi
         await AssertErrorResponseAsync(invalidGuid, "validation_error", "productId");
     }
 
+    [Fact]
+    public async Task Patch_Product_Activate_Inactive_Product_Returns_NoContent()
+    {
+        var product = CreateProduct(name: "Inactive Product", sku: "INACTIVE-ACTIVATE", isActive: false);
+        await SeedProductsAsync(product);
+
+        var response = await _client.PatchAsync($"/products/{product.Id}/activate", content: null);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var updatedProduct = await dbContext.Products.FindAsync(product.Id);
+
+        Assert.NotNull(updatedProduct);
+        Assert.True(updatedProduct!.IsActive);
+        Assert.NotNull(updatedProduct.UpdatedAt);
+
+        var detail = await _client.GetAsync($"/products/{product.Id}");
+        Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
+        var detailPayload = await ReadJsonAsync(detail);
+        Assert.True(detailPayload.RootElement.GetProperty("isActive").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Patch_Product_Activate_Active_Product_Is_Idempotent()
+    {
+        var updatedAt = DateTime.UtcNow.AddDays(-1);
+        var product = CreateProduct(name: "Active Product", sku: "ACTIVE-ACTIVATE", isActive: true);
+        product.UpdatedAt = updatedAt;
+        await SeedProductsAsync(product);
+
+        var response = await _client.PatchAsync($"/products/{product.Id}/activate", content: null);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var persisted = await dbContext.Products.FindAsync(product.Id);
+
+        Assert.NotNull(persisted);
+        Assert.True(persisted!.IsActive);
+        Assert.Equal(updatedAt, persisted.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task Patch_Product_Activate_Returns_NotFound_And_Invalid_Guid_Errors()
+    {
+        var notFound = await _client.PatchAsync($"/products/{Guid.NewGuid()}/activate", content: null);
+        var invalidGuid = await _client.PatchAsync("/products/not-a-guid/activate", content: null);
+
+        Assert.Equal(HttpStatusCode.NotFound, notFound.StatusCode);
+        await AssertErrorResponseAsync(notFound, "not_found", "productId");
+
+        Assert.Equal(HttpStatusCode.BadRequest, invalidGuid.StatusCode);
+        await AssertErrorResponseAsync(invalidGuid, "validation_error", "productId");
+    }
+
     private async Task SeedProductsAsync(params Product[] products) =>
         await SeedProductsAsync(products, Array.Empty<Branch>(), Array.Empty<Stock>());
 
