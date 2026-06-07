@@ -61,9 +61,24 @@ public class InventoryMovementService : IInventoryMovementService
         var stock = await _db.Stocks
             .FirstOrDefaultAsync(s => s.ProductId == productId && s.BranchId == branchId, cancellationToken);
 
+        if (stock is null && type == MovementType.Outgoing)
+        {
+            return new CreateInventoryMovementResult.InsufficientStock(
+                request.Quantity,
+                0);
+        }
+
         if (stock is null)
         {
-            return new CreateInventoryMovementResult.StockNotFound();
+            stock = new Stock
+            {
+                Id = Guid.NewGuid(),
+                ProductId = productId,
+                BranchId = branchId,
+                AvailableQuantity = 0,
+                MinStock = product.MinStock
+            };
+            _db.Stocks.Add(stock);
         }
 
         var previousStock = stock.AvailableQuantity;
