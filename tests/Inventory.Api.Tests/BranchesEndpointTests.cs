@@ -195,6 +195,61 @@ public class BranchesEndpointTests : IClassFixture<InventoryApiFactory>
         Assert.NotNull(payload.UpdatedAt);
     }
 
+    [Fact]
+    public async Task Patch_Branches_Activate_Activates_Branch_As_Admin()
+    {
+        var branch = CreateBranch("Central", isActive: false);
+        await _factory.ResetDatabaseAsync(branch);
+        var client = CreateClient(UserRole.Admin);
+
+        var response = await client.PatchAsync($"/branches/{branch.Id}/activate", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var payload = await response.Content.ReadFromJsonAsync<BranchResponse>();
+        Assert.NotNull(payload);
+        Assert.True(payload.IsActive);
+        Assert.NotNull(payload.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task Patch_Branches_Activate_Active_Branch_Is_Idempotent()
+    {
+        var branch = CreateBranch("Central", isActive: true);
+        await _factory.ResetDatabaseAsync(branch);
+        var client = CreateClient(UserRole.Admin);
+
+        var response = await client.PatchAsync($"/branches/{branch.Id}/activate", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var payload = await response.Content.ReadFromJsonAsync<BranchResponse>();
+        Assert.NotNull(payload);
+        Assert.True(payload.IsActive);
+    }
+
+    [Fact]
+    public async Task Patch_Branches_Activate_Rejects_Collaborator()
+    {
+        var branch = CreateBranch("Central", isActive: false);
+        await _factory.ResetDatabaseAsync(branch);
+        var client = CreateClient(UserRole.Collaborator);
+
+        var response = await client.PatchAsync($"/branches/{branch.Id}/activate", content: null);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Patch_Branches_Activate_Returns_404_When_Not_Found()
+    {
+        await _factory.ResetDatabaseAsync();
+        var client = CreateClient(UserRole.Admin);
+
+        var response = await client.PatchAsync($"/branches/{Guid.NewGuid()}/activate", content: null);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        await AssertErrorResponseAsync(response, "not_found", "branchId");
+    }
+
     private HttpClient CreateClient(UserRole role)
     {
         var client = _factory.CreateClient();
