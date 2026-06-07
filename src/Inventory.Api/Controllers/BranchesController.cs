@@ -149,6 +149,33 @@ public class BranchesController : ControllerBase
         return Ok(ToResponse(branch));
     }
 
+    [HttpPatch("{branchId:guid}/activate")]
+    [Authorize(Roles = nameof(UserRole.Admin))]
+    [ProducesResponseType(typeof(BranchResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<BranchResponse>> ActivateBranch(Guid branchId)
+    {
+        var branch = await _dbContext.Branches.FirstOrDefaultAsync(branch => branch.Id == branchId);
+        if (branch is null)
+        {
+            return NotFoundError("Branch not found.");
+        }
+
+        if (branch.IsActive)
+        {
+            return Ok(ToResponse(branch));
+        }
+
+        branch.IsActive = true;
+        branch.UpdatedAt = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync();
+
+        return Ok(ToResponse(branch));
+    }
+
     private static BranchResponse ToResponse(Branch branch) => new(
         branch.Id,
         branch.Name,

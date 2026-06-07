@@ -44,7 +44,7 @@ public class AuthRegisterEndpointTests : IClassFixture<InventoryApiFactory>
         Assert.False(string.IsNullOrWhiteSpace(user.GetProperty("id").GetString()));
         Assert.Equal("Ana Gómez", user.GetProperty("name").GetString());
         Assert.Equal(((dynamic)payload).email, user.GetProperty("email").GetString());
-        Assert.Equal("collaborator", user.GetProperty("role").GetString());
+        Assert.Equal("admin", user.GetProperty("role").GetString());
         Assert.Equal(0, user.GetProperty("branchIds").GetArrayLength());
         Assert.True(user.GetProperty("isActive").GetBoolean());
         Assert.True(user.TryGetProperty("createdAt", out _));

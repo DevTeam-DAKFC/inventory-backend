@@ -713,8 +713,12 @@ paths:
         are preserved for traceability. An inactive branch should not be
         used to register new movements.
       responses:
-        '204':
+        '200':
           description: Branch deactivated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Branch'
         '401':
           description: Missing or invalid access token.
           content:
@@ -723,6 +727,53 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
           description: Caller is not allowed to deactivate this branch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Branch not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /branches/{branchId}/activate:
+    parameters:
+      - in: path
+        name: branchId
+        required: true
+        schema:
+          type: string
+        description: Identifier of the branch.
+    patch:
+      tags:
+        - Branches
+      summary: Activate branch
+      description: |
+        Reactivates a branch so it can be used again to register inventory
+        movements. Calling this operation for an active branch is idempotent.
+      responses:
+        '200':
+          description: Branch activated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Branch'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller is not allowed to activate this branch.
           content:
             application/json:
               schema:

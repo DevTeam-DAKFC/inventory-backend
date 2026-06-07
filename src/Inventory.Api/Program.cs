@@ -6,6 +6,8 @@ using Inventory.Api.Common.Errors;
 using Inventory.Api.Data;
 using Inventory.Api.Imports;
 using Inventory.Api.InventoryMovements;
+using Inventory.Api.ProductLookup;
+using Inventory.Api.ProductLookup.OpenFoodFacts;
 using Inventory.Api.Products;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
@@ -88,6 +90,21 @@ builder.Services.AddDbContext<InventoryDbContext>(options =>
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IProductImageStorage, LocalProductImageStorage>();
+builder.Services
+    .AddOptions<ProductLookupOptions>()
+    .Bind(builder.Configuration.GetSection(ProductLookupOptions.SectionName))
+    .Validate(options => !string.IsNullOrWhiteSpace(options.BaseUrl), "ProductLookup:BaseUrl is required.")
+    .Validate(options => Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out _), "ProductLookup:BaseUrl must be an absolute URI.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.UserAgent), "ProductLookup:UserAgent is required.")
+    .Validate(options => options.TimeoutSeconds > 0, "ProductLookup:TimeoutSeconds must be greater than zero.")
+    .ValidateOnStart();
+builder.Services.AddHttpClient<IExternalProductLookupService, OpenFoodFactsProductLookupService>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<ProductLookupOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(options.UserAgent);
+});
 
 builder.Services
     .AddOptions<JwtOptions>()
@@ -148,6 +165,18 @@ builder.Services
                     challengeContext.Response,
                     challengeContext.HttpContext.TraceIdentifier,
                     challengeContext.HttpContext.RequestAborted);
+            },
+            OnForbidden = async forbiddenContext =>
+            {
+                if (forbiddenContext.Response.HasStarted)
+                {
+                    return;
+                }
+
+                await AuthChallengeResponseWriter.WriteForbiddenAsync(
+                    forbiddenContext.Response,
+                    forbiddenContext.HttpContext.TraceIdentifier,
+                    forbiddenContext.HttpContext.RequestAborted);
             }
         };
     });
