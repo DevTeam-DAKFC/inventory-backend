@@ -110,6 +110,70 @@ public class InventoryMovementsEndpointTests : IClassFixture<InventoryApiFactory
     }
 
     [Fact]
+    public async Task Post_Incoming_Movement_Creates_Stock_When_Product_Branch_Stock_Does_Not_Exist()
+    {
+        var scenario = await SeedScenarioWithoutStockAsync();
+        var request = CreateAuthorizedRequest(HttpMethod.Post, "/inventory-movements", scenario.Token, new
+        {
+            productId = scenario.ProductId,
+            branchId = scenario.BranchId,
+            type = "incoming",
+            quantity = 5,
+            reason = "Initial stock"
+        });
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("incoming", body.GetProperty("type").GetString());
+        Assert.Equal(0, body.GetProperty("previousStock").GetInt32());
+        Assert.Equal(5, body.GetProperty("resultingStock").GetInt32());
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var stock = await db.Stocks.SingleAsync(s =>
+            s.ProductId == scenario.ProductId &&
+            s.BranchId == scenario.BranchId);
+
+        Assert.Equal(5, stock.AvailableQuantity);
+        Assert.NotNull(stock.LastMovementId);
+        Assert.NotNull(stock.LastMovementAt);
+        Assert.NotNull(stock.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task Post_Outgoing_Movement_Returns_422_When_Stock_Does_Not_Exist()
+    {
+        var scenario = await SeedScenarioWithoutStockAsync();
+        var request = CreateAuthorizedRequest(HttpMethod.Post, "/inventory-movements", scenario.Token, new
+        {
+            productId = scenario.ProductId,
+            branchId = scenario.BranchId,
+            type = "outgoing",
+            quantity = 1,
+            reason = "Sale"
+        });
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var error = body.GetProperty("error");
+        Assert.Equal("insufficient_stock", error.GetProperty("code").GetString());
+        Assert.Contains("Requested 1 but only 0", error.GetProperty("details")[0].GetProperty("message").GetString());
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        Assert.False(await db.Stocks.AnyAsync(s =>
+            s.ProductId == scenario.ProductId &&
+            s.BranchId == scenario.BranchId));
+        Assert.False(await db.InventoryMovements.AnyAsync(m => m.ProductId == scenario.ProductId));
+    }
+
+    [Fact]
     public async Task Get_List_Includes_Successful_Movement()
     {
         var scenario = await SeedScenarioAsync(initialStock: 1);
@@ -263,6 +327,51 @@ public class InventoryMovementsEndpointTests : IClassFixture<InventoryApiFactory
         return new MovementScenario(user.Id, product.Id, branch.Id, stock.Id, token);
     }
 
+    private async Task<MovementScenarioWithoutStock> SeedScenarioWithoutStockAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var tokens = scope.ServiceProvider.GetRequiredService<ITokenService>();
+        var now = DateTime.UtcNow;
+
+        var user = new AppUser
+        {
+            Id = Guid.NewGuid(),
+            Name = "Inventory User",
+            Email = $"movement-{Guid.NewGuid():N}@example.com",
+            PasswordHash = "not-used",
+            Role = UserRole.Collaborator,
+            IsActive = true,
+            CreatedAt = now
+        };
+        var product = new Product
+        {
+            Id = Guid.NewGuid(),
+            Name = "New Product",
+            Sku = $"SKU-{Guid.NewGuid():N}",
+            Category = "Food",
+            MinStock = 1,
+            IsActive = true,
+            CreatedAt = now
+        };
+        var branch = new Branch
+        {
+            Id = Guid.NewGuid(),
+            Name = "Central",
+            Address = "Main street",
+            IsActive = true,
+            CreatedAt = now
+        };
+
+        db.Users.Add(user);
+        db.Products.Add(product);
+        db.Branches.Add(branch);
+        await db.SaveChangesAsync();
+
+        var token = tokens.CreateAccessToken(user).Value;
+        return new MovementScenarioWithoutStock(user.Id, product.Id, branch.Id, token);
+    }
+
     private static HttpRequestMessage CreateAuthorizedRequest(
         HttpMethod method,
         string url,
@@ -282,5 +391,11 @@ public class InventoryMovementsEndpointTests : IClassFixture<InventoryApiFactory
         Guid ProductId,
         Guid BranchId,
         Guid StockId,
+        string Token);
+
+    private sealed record MovementScenarioWithoutStock(
+        Guid UserId,
+        Guid ProductId,
+        Guid BranchId,
         string Token);
 }

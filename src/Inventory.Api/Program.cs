@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Inventory.Api.Auth;
 using Inventory.Api.Common.Errors;
 using Inventory.Api.Data;
+using Inventory.Api.Imports;
 using Inventory.Api.InventoryMovements;
 using Inventory.Api.ProductLookup;
 using Inventory.Api.ProductLookup.OpenFoodFacts;
@@ -17,6 +18,7 @@ using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
+const string DevelopmentCorsPolicy = "DevelopmentCorsPolicy";
 
 builder.Services
     .AddControllers()
@@ -61,6 +63,28 @@ builder.Services.AddOpenApi();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy(DevelopmentCorsPolicy, policy =>
+        {
+            policy
+                .SetIsOriginAllowed(origin =>
+                {
+                    if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+                    {
+                        return false;
+                    }
+
+                    return uri.Host is "localhost" or "127.0.0.1";
+                })
+                .AllowAnyHeader()
+                .AllowAnyMethod();
+        });
+    });
+}
+
 builder.Services.AddDbContext<InventoryDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
@@ -98,6 +122,7 @@ builder.Services.AddScoped<IAuthRegistrationService, AuthRegistrationService>();
 builder.Services.AddScoped<IAuthLoginService, AuthLoginService>();
 builder.Services.AddScoped<IAuthCurrentUserService, AuthCurrentUserService>();
 builder.Services.AddScoped<IInventoryMovementService, InventoryMovementService>();
+builder.Services.AddScoped<IProductCsvImportService, ProductCsvImportService>();
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -190,6 +215,11 @@ app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(webRootPath)
 });
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseCors(DevelopmentCorsPolicy);
+}
 
 app.UseAuthentication();
 app.UseAuthorization();

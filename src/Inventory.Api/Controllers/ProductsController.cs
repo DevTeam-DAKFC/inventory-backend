@@ -315,6 +315,37 @@ public class ProductsController : ControllerBase
         return NoContent();
     }
 
+    [HttpPatch("{productId}/activate")]
+    public async Task<IActionResult> ActivateProduct(string productId, CancellationToken cancellationToken)
+    {
+        if (!TryParseProductId(productId, out var parsedProductId, out var invalidIdResult))
+        {
+            return invalidIdResult;
+        }
+
+        var product = await _dbContext.Products
+            .FirstOrDefaultAsync(product => product.Id == parsedProductId, cancellationToken);
+
+        if (product is null)
+        {
+            return NotFound(CreateError(
+                "not_found",
+                "Product was not found.",
+                new[] { new FieldError("productId", "Product was not found.") }));
+        }
+
+        if (product.IsActive)
+        {
+            return NoContent();
+        }
+
+        product.IsActive = true;
+        product.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return NoContent();
+    }
+
     [HttpPost("{productId}/image")]
     [Consumes("multipart/form-data")]
     [ProducesResponseType(typeof(ProductResponse), StatusCodes.Status200OK)]
