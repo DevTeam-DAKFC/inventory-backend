@@ -1,12 +1,45 @@
 using Inventory.Api.Data;
 using Inventory.Api.Models;
 using Inventory.Api.Notifications;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Inventory.Api.Tests.Notifications;
 
 public class FirebaseFcmNotificationSenderTests
 {
+    [Fact]
+    public void Firebase_Disabled_Uses_NoOp_Sender()
+    {
+        using var factory = new InventoryApiFactory();
+        using var scope = factory.Services.CreateScope();
+
+        var sender = scope.ServiceProvider.GetRequiredService<IFcmNotificationSender>();
+
+        Assert.IsType<NoOpFcmNotificationSender>(sender);
+    }
+
+    [Fact]
+    public void Firebase_Enabled_With_Empty_CredentialsPath_Uses_Firebase_Sender_Without_Startup_Failure()
+    {
+        using var factory = new InventoryApiFactory();
+        using var configuredFactory = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, configuration) =>
+                configuration.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Firebase:Enabled"] = "true",
+                    ["Firebase:ProjectId"] = "test-project",
+                    ["Firebase:CredentialsPath"] = ""
+                })));
+        using var scope = configuredFactory.Services.CreateScope();
+
+        var sender = scope.ServiceProvider.GetRequiredService<IFcmNotificationSender>();
+
+        Assert.IsType<FirebaseFcmNotificationSender>(sender);
+    }
+
     [Fact]
     public async Task SendAsync_Does_Not_Call_Firebase_When_No_Tokens_Exist()
     {

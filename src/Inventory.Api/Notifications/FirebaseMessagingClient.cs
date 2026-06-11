@@ -38,7 +38,9 @@ public sealed class FirebaseMessagingClient : IFirebaseMessagingClient
     {
         var appOptions = new AppOptions
         {
-            Credential = GoogleCredential.FromFile(options.CredentialsPath!)
+            Credential = string.IsNullOrWhiteSpace(options.CredentialsPath)
+                ? GoogleCredential.GetApplicationDefault()
+                : GoogleCredential.FromFile(options.CredentialsPath)
         };
 
         if (!string.IsNullOrWhiteSpace(options.ProjectId))

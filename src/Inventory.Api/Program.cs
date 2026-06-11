@@ -76,7 +76,7 @@ builder.Services.AddScoped<NoOpFcmNotificationSender>();
 builder.Services.AddScoped<IFcmNotificationSender>(serviceProvider =>
 {
     var options = serviceProvider.GetRequiredService<IOptions<FcmOptions>>().Value;
-    return options.Enabled && !string.IsNullOrWhiteSpace(options.CredentialsPath)
+    return options.Enabled
         ? serviceProvider.GetRequiredService<FirebaseFcmNotificationSender>()
         : serviceProvider.GetRequiredService<NoOpFcmNotificationSender>();
 });
