@@ -1611,8 +1611,8 @@ paths:
       summary: Register or upsert a device token
       description: |
         Registers a push notification token for the authenticated user. If
-        the device already has a token recorded, the existing record is
-        upserted so the same device does not accumulate duplicates.
+        the same token is already recorded, the existing record is updated
+        and associated with the authenticated user instead of duplicated.
       requestBody:
         required: true
         content:
@@ -1624,18 +1624,23 @@ paths:
               platform: android
       responses:
         '201':
-          description: Token registered or updated.
+          description: Token registered.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotificationToken'
               example:
-                id: token_001
-                userId: user_admin_001
+                id: 17862eaf-2ed2-4550-aa7f-e031915d23e6
                 token: fcm_device_token_admin_demo
                 platform: android
                 createdAt: '2026-06-02T20:00:00Z'
-                updatedAt: '2026-06-02T20:00:00Z'
+                updatedAt: null
+        '200':
+          description: Existing token updated and associated with the authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationToken'
         '400':
           description: Validation error.
           content:
@@ -1644,6 +1649,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Token could not be registered because of an unresolved persistence conflict.
           content:
             application/json:
               schema:
@@ -1662,6 +1673,7 @@ paths:
         required: true
         schema:
           type: string
+          format: uuid
         description: Identifier of the notification token.
     delete:
       tags:
@@ -1673,20 +1685,20 @@ paths:
       responses:
         '204':
           description: Token removed.
+        '400':
+          description: tokenId is not a valid GUID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Missing or invalid access token.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        '403':
-          description: Caller is not allowed to remove this token.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Token not found.
+          description: Token not found or not owned by the authenticated user.
           content:
             application/json:
               schema:
@@ -2106,7 +2118,6 @@ components:
         - android
         - ios
         - web
-        - unknown
       description: Device platform reported for a push notification token.
 
     User:
@@ -2332,19 +2343,17 @@ components:
       type: object
       required:
         - id
-        - userId
         - token
         - platform
         - createdAt
       properties:
         id:
           type: string
-          example: token_001
-        userId:
-          type: string
-          example: user_admin_001
+          format: uuid
+          example: 17862eaf-2ed2-4550-aa7f-e031915d23e6
         token:
           type: string
+          maxLength: 500
           example: fcm_device_token_admin_demo
         platform:
           $ref: '#/components/schemas/PlatformType'
@@ -2355,6 +2364,7 @@ components:
         updatedAt:
           type: string
           format: date-time
+          nullable: true
           example: '2026-06-02T20:00:00Z'
 
     ImportBatchError:
@@ -2688,6 +2698,8 @@ components:
       properties:
         token:
           type: string
+          minLength: 1
+          maxLength: 500
           example: fcm_device_token_admin_demo
         platform:
           $ref: '#/components/schemas/PlatformType'

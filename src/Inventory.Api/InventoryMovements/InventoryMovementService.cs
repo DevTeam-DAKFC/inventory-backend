@@ -3,6 +3,7 @@ using Inventory.Api.Common.Pagination;
 using Inventory.Api.Data;
 using Inventory.Api.InventoryMovements.Dtos;
 using Inventory.Api.Models;
+using Inventory.Api.Notifications;
 using Microsoft.EntityFrameworkCore;
 
 namespace Inventory.Api.InventoryMovements;
@@ -13,11 +14,16 @@ public class InventoryMovementService : IInventoryMovementService
 
     private readonly InventoryDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IStockAlertNotificationService _stockAlertNotificationService;
 
-    public InventoryMovementService(InventoryDbContext db, TimeProvider timeProvider)
+    public InventoryMovementService(
+        InventoryDbContext db,
+        TimeProvider timeProvider,
+        IStockAlertNotificationService stockAlertNotificationService)
     {
         _db = db;
         _timeProvider = timeProvider;
+        _stockAlertNotificationService = stockAlertNotificationService;
     }
 
     public async Task<CreateInventoryMovementResult> CreateAsync(
@@ -122,6 +128,16 @@ public class InventoryMovementService : IInventoryMovementService
         _db.InventoryMovements.Add(movement);
         await _db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+
+        await _stockAlertNotificationService.NotifyIfSeverityIncreasedAsync(
+            previousStock,
+            resultingStock,
+            stock.MinStock,
+            product.Id,
+            product.Name,
+            branch.Id,
+            branch.Name,
+            cancellationToken);
 
         return new CreateInventoryMovementResult.Success(
             InventoryMovementResponse.FromEntity(movement));
