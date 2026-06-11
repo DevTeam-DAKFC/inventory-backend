@@ -10,6 +10,8 @@ obj/
 .env.*
 !.env.example
 appsettings.*.local.json
+*service-account*.json
+*firebase-adminsdk*.json
 
 # Runtime product images
 src/Inventory.Api/wwwroot/uploads/products/

@@ -5,6 +5,7 @@ using Inventory.Api.Auth;
 using Inventory.Api.Common.Errors;
 using Inventory.Api.Data;
 using Inventory.Api.InventoryMovements;
+using Inventory.Api.Notifications;
 using Inventory.Api.ProductLookup;
 using Inventory.Api.ProductLookup.OpenFoodFacts;
 using Inventory.Api.Products;
@@ -66,6 +67,20 @@ builder.Services.AddDbContext<InventoryDbContext>(options =>
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IProductImageStorage, LocalProductImageStorage>();
+builder.Services
+    .AddOptions<FcmOptions>()
+    .Bind(builder.Configuration.GetSection(FcmOptions.SectionName));
+builder.Services.AddSingleton<IFirebaseMessagingClient, FirebaseMessagingClient>();
+builder.Services.AddScoped<FirebaseFcmNotificationSender>();
+builder.Services.AddScoped<NoOpFcmNotificationSender>();
+builder.Services.AddScoped<IFcmNotificationSender>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<FcmOptions>>().Value;
+    return options.Enabled && !string.IsNullOrWhiteSpace(options.CredentialsPath)
+        ? serviceProvider.GetRequiredService<FirebaseFcmNotificationSender>()
+        : serviceProvider.GetRequiredService<NoOpFcmNotificationSender>();
+});
+builder.Services.AddScoped<IStockAlertNotificationService, StockAlertNotificationService>();
 builder.Services
     .AddOptions<ProductLookupOptions>()
     .Bind(builder.Configuration.GetSection(ProductLookupOptions.SectionName))
