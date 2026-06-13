@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
 
 namespace Inventory.Api.Tests;
 
@@ -20,10 +22,53 @@ public class DocumentationEndpointsTests : IClassFixture<InventoryApiFactory>
     }
 
     [Fact]
+    public async Task Get_OpenApi_Document_Exposes_Implemented_Endpoints_And_Schemas()
+    {
+        var document = await _client.GetFromJsonAsync<JsonElement>("/openapi/v1.json");
+        var paths = document.GetProperty("paths");
+
+        AssertPathMethod(paths, "/health", "get");
+        AssertPathMethod(paths, "/stock", "get");
+        AssertPathMethod(paths, "/stock/lookup", "get");
+        AssertPathMethod(paths, "/stock/{stockId}", "get");
+
+        var schemas = document
+            .GetProperty("components")
+            .GetProperty("schemas");
+
+        Assert.True(schemas.TryGetProperty("ErrorResponse", out _));
+        Assert.True(schemas.TryGetProperty("StockResponse", out _));
+        Assert.True(schemas.TryGetProperty("StockProductResponse", out _));
+        Assert.True(schemas.TryGetProperty("StockBranchResponse", out _));
+    }
+
+    [Fact]
+    public async Task Get_Swagger_Document_Returns_200_In_Development()
+    {
+        var response = await _client.GetAsync("/swagger/v1/swagger.json");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Get_Swagger_Ui_Returns_200_In_Development()
+    {
+        var response = await _client.GetAsync("/swagger/index.html");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Get_Scalar_Reference_Returns_200_In_Development()
     {
         var response = await _client.GetAsync("/scalar/v1");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private static void AssertPathMethod(JsonElement paths, string path, string method)
+    {
+        Assert.True(paths.TryGetProperty(path, out var pathItem), $"Expected OpenAPI path '{path}'.");
+        Assert.True(pathItem.TryGetProperty(method, out _), $"Expected OpenAPI method '{method}' for '{path}'.");
     }
 }
