@@ -62,7 +62,10 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.CustomSchemaIds(type => type.FullName?.Replace('+', '.') ?? type.Name);
+});
 
 if (builder.Environment.IsDevelopment())
 {

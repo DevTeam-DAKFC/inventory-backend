@@ -46,8 +46,11 @@ public class DocumentationEndpointsTests : IClassFixture<InventoryApiFactory>
     public async Task Get_Swagger_Document_Returns_200_In_Development()
     {
         var response = await _client.GetAsync("/swagger/v1/swagger.json");
+        var content = await response.Content.ReadAsStringAsync();
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(
+            response.IsSuccessStatusCode,
+            $"Expected 2xx status code, got {(int)response.StatusCode} {response.StatusCode}: {content}");
     }
 
     [Fact]
@@ -70,6 +73,8 @@ public class DocumentationEndpointsTests : IClassFixture<InventoryApiFactory>
     {
         Assert.True(paths.TryGetProperty(path, out var pathItem), $"Expected OpenAPI path '{path}'.");
         Assert.True(pathItem.TryGetProperty(method, out _), $"Expected OpenAPI method '{method}' for '{path}'.");
+    }
+
     [Fact]
     public async Task OpenApi_Documents_NotificationToken_Endpoints_And_Responses()
     {
