@@ -353,7 +353,7 @@ public class ProductsController : ControllerBase
     [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> UploadProductImage(
         string productId,
-        [FromForm] IFormFile? file,
+        IFormFile? file,
         CancellationToken cancellationToken)
     {
         if (!TryParseProductId(productId, out var parsedProductId, out var invalidIdResult))
